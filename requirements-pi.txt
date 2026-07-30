@@ -1,0 +1,12 @@
+# Dependências que só instalam/funcionam no Raspberry Pi (acesso a GPIO).
+# Instalar por cima do requirements.txt, só no próprio Pi:
+#   pip install -r requirements.txt -r requirements-pi.txt
+
+pyserial>=3.5     # usado pelo futuro SerialReceiver (Arduino bridge via USB)
+
+# Usados hoje só pelo receiver/rf_receiver.py (obsoleto, será substituído
+# pelo SerialReceiver) e pelos scripts soltos de teste RF
+# (app/testeantena.py, app/testereceptor.py, testeReceiver/rf_test.py).
+# Remover esta seção quando esses arquivos saírem do projeto.
+rpi_rf
+RPi.GPIO

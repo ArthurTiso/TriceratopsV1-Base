@@ -32,7 +32,7 @@ class SimulatedReceiver(BaseReceiver):
                 self.peso_max = self.peso_atual
 
             # Chance de quebra (aumenta com o tempo)
-            chance_quebra = min(0.02 + self.tempo * 0.002, 0.35)
+            chance_quebra = min(0.02 + self.tempo * 0.002, 0.15)
 
             if random.random() < chance_quebra:
                 print("[EVENTO] Ponte QUEBROU!")
@@ -40,7 +40,7 @@ class SimulatedReceiver(BaseReceiver):
 
         else:
             # Após quebra, peso despenca
-            self.peso_atual = max(0, self.peso_atual - random.randint(20, 50))
+            self.peso_atual = max(0, self.peso_atual - random.randint(20, 100))
 
         # Flag: 1 = quebrou
         flag = 1 if self.quebrou else 0

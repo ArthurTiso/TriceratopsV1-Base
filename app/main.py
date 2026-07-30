@@ -6,7 +6,7 @@ from core.system_state import SystemState
 from core.processor import Processor
 
 # 🔥 CONTROLE AQUI
-USAR_RF = True  # True = Raspberry | False = Simulador
+USAR_RF = False  # True = Raspberry | False = Simulador
 
 
 def main():
