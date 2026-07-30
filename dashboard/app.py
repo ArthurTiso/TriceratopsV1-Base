@@ -4,6 +4,8 @@ import os
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 
+#streamlit run dashboard/app.py
+
 st.set_page_config(page_title="Spino — Ensaio de Ponte", layout="wide")
 
 # ⏳ Tempo sem mudança de peso para acionar alerta visual (segundos)
