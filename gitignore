@@ -1,0 +1,21 @@
+# Bytecode / cache do Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ambientes virtuais
+venv/
+.venv/
+env/
+
+# Dados gerados em runtime (não fazem parte do código-fonte)
+data.json
+state.json
+
+# Configuração local do Streamlit (pode conter tokens/preferências da máquina)
+.streamlit/
+
+# Editor / SO
+.vscode/
+.idea/
+.DS_Store
