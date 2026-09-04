@@ -14,12 +14,14 @@ from sender.modulo3_payload import build_capture_payload
 #  CONTROLE AQUI
 USAR_RF = False  # True = Raspberry | False = Simulador
 TEAM_CODE = os.getenv("SPINO_TEAM_CODE")
+SEND_INTERVAL_SECONDS = float(os.getenv("SPINO_SEND_INTERVAL_SECONDS", "1"))
 
 
 def main():
     receiver = None
     sender = None
-    ultimo_status_enviado = None
+    ultimo_status = None
+    ultimo_envio = 0.0
 
     try:
         #  ESCOLHA DO RECEIVER
@@ -61,12 +63,20 @@ def main():
                 with open("data.json", "w") as f:
                     json.dump(state.get_snapshot(), f)
 
-                # Envio ao M3: uma amostra por leitura e um único evento de
-                # conclusão quando o Arduino sinaliza a ruptura.
-                if state.status != "BROKEN" or ultimo_status_enviado != "BROKEN":
+                # A leitura RF ocorre na frequência máxima. O envio HTTP é
+                # amostrado em 1 Hz (configurável) para não atingir o limite
+                # da API. A ruptura é enviada imediatamente uma única vez.
+                agora_monotonic = time.monotonic()
+                ruptura_detectada = state.status == "BROKEN" and ultimo_status != "BROKEN"
+                amostra_devida = (
+                    state.status != "BROKEN"
+                    and agora_monotonic - ultimo_envio >= SEND_INTERVAL_SECONDS
+                )
+                if ruptura_detectada or amostra_devida:
                     event = "completed" if state.status == "BROKEN" else "sample"
                     sender.enviar(build_capture_payload(TEAM_CODE, dados, event))
-                    ultimo_status_enviado = state.status
+                    ultimo_envio = agora_monotonic
+                ultimo_status = state.status
 
             except Exception as e:
                 print("ERRO:", e)

@@ -12,6 +12,7 @@ como referência; não versione o token real.
 export SPINO_TEAM_CODE=PONTE001
 export SPINO_MODULO3_URL=http://IP_DO_SERVIDOR:8000/api/v1/sensors/capture
 export SPINO_MODULO3_TOKEN=mesmo-token-configurado-no-modulo-3
+export SPINO_SEND_INTERVAL_SECONDS=1
 python -m app.main
 ```
 
@@ -30,6 +31,10 @@ O Módulo 2 exibe e processa `peso_atual` em **kg**. Antes do envio ele o
 converte para `load_grams`, unidade usada pelo Módulo 3 no banco; o placar
 volta a apresentar esse valor em kg. Quando o Arduino sinaliza ruptura,
 `event` é enviado uma única vez como `completed`.
+
+A leitura RF permanece na frequência nativa. Por padrão, o envio HTTP é
+amostrado em uma leitura por segundo para ficar abaixo do limite da API;
+`SPINO_SEND_INTERVAL_SECONDS` pode ajustar esse intervalo.
 
 ## Testes
 
