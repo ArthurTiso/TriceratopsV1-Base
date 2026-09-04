@@ -1,21 +1,25 @@
 import time
 import sys
 import json
+import os
 
 from protocol.decoder import ProtocolDecoder
 from core.system_state import SystemState
 from core.processor import Processor
 from sender.api_sender import ApiSender
+from sender.modulo3_payload import build_capture_payload
 
 #python -m app.main
 
 #  CONTROLE AQUI
 USAR_RF = False  # True = Raspberry | False = Simulador
+TEAM_CODE = os.getenv("SPINO_TEAM_CODE")
 
 
 def main():
     receiver = None
     sender = None
+    ultimo_status_enviado = None
 
     try:
         #  ESCOLHA DO RECEIVER
@@ -33,6 +37,9 @@ def main():
         state = SystemState()
         processor = Processor(state)
         sender = ApiSender()
+
+        if not TEAM_CODE:
+            raise RuntimeError("Defina SPINO_TEAM_CODE antes de iniciar o Módulo 2")
 
         print("Sistema iniciado. Aguardando pacotes...\n")
 
@@ -54,15 +61,12 @@ def main():
                 with open("data.json", "w") as f:
                     json.dump(state.get_snapshot(), f)
 
-                #  ENVIO PRO MÓDULO 3 — enfileira e segue, não espera resposta
-                sender.enviar({
-                    "bateria": dados["bateria"],
-                    "peso_max": dados["peso_max"],
-                    "peso_atual": dados["peso_atual"],
-                    "angulo": dados["angulo"],
-                    "tempo": dados["tempo"],
-                    "status": state.status,
-                })
+                # Envio ao M3: uma amostra por leitura e um único evento de
+                # conclusão quando o Arduino sinaliza a ruptura.
+                if state.status != "BROKEN" or ultimo_status_enviado != "BROKEN":
+                    event = "completed" if state.status == "BROKEN" else "sample"
+                    sender.enviar(build_capture_payload(TEAM_CODE, dados, event))
+                    ultimo_status_enviado = state.status
 
             except Exception as e:
                 print("ERRO:", e)
