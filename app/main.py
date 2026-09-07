@@ -1,21 +1,27 @@
 import time
 import sys
 import json
+import os
 
 from protocol.decoder import ProtocolDecoder
 from core.system_state import SystemState
 from core.processor import Processor
 from sender.api_sender import ApiSender
+from sender.modulo3_payload import build_capture_payload
 
 #python -m app.main
 
 #  CONTROLE AQUI
 USAR_RF = False  # True = Raspberry | False = Simulador
+TEAM_CODE = os.getenv("SPINO_TEAM_CODE")
+SEND_INTERVAL_SECONDS = float(os.getenv("SPINO_SEND_INTERVAL_SECONDS", "1"))
 
 
 def main():
     receiver = None
     sender = None
+    ultimo_status = None
+    ultimo_envio = 0.0
 
     try:
         #  ESCOLHA DO RECEIVER
@@ -33,6 +39,9 @@ def main():
         state = SystemState()
         processor = Processor(state)
         sender = ApiSender()
+
+        if not TEAM_CODE:
+            raise RuntimeError("Defina SPINO_TEAM_CODE antes de iniciar o Módulo 2")
 
         print("Sistema iniciado. Aguardando pacotes...\n")
 
@@ -54,15 +63,20 @@ def main():
                 with open("data.json", "w") as f:
                     json.dump(state.get_snapshot(), f)
 
-                #  ENVIO PRO MÓDULO 3 — enfileira e segue, não espera resposta
-                sender.enviar({
-                    "bateria": dados["bateria"],
-                    "peso_max": dados["peso_max"],
-                    "peso_atual": dados["peso_atual"],
-                    "angulo": dados["angulo"],
-                    "tempo": dados["tempo"],
-                    "status": state.status,
-                })
+                # A leitura RF ocorre na frequência máxima. O envio HTTP é
+                # amostrado em 1 Hz (configurável) para não atingir o limite
+                # da API. A ruptura é enviada imediatamente uma única vez.
+                agora_monotonic = time.monotonic()
+                ruptura_detectada = state.status == "BROKEN" and ultimo_status != "BROKEN"
+                amostra_devida = (
+                    state.status != "BROKEN"
+                    and agora_monotonic - ultimo_envio >= SEND_INTERVAL_SECONDS
+                )
+                if ruptura_detectada or amostra_devida:
+                    event = "completed" if state.status == "BROKEN" else "sample"
+                    sender.enviar(build_capture_payload(TEAM_CODE, dados, event))
+                    ultimo_envio = agora_monotonic
+                ultimo_status = state.status
 
             except Exception as e:
                 print("ERRO:", e)

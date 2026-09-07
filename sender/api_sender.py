@@ -1,15 +1,15 @@
 import threading
 import queue
 import time
+import os
 from datetime import datetime, timezone
 
 import requests
 
-#
-
-# 🔧 CONFIGURAÇÃO — preencher quando o endpoint real do Módulo 3 estiver pronto
-MODULO3_URL = "http://localhost:8000/api/v1/sensors/capture"  # TODO: URL real
-MODULO3_TOKEN = None  # TODO: token de autenticação, quando existir
+# Configuração do Módulo 3. No Raspberry, defina estas variáveis de ambiente
+# antes de iniciar o processo (veja .env.example).
+MODULO3_URL = os.getenv("SPINO_MODULO3_URL", "http://localhost:8000/api/v1/sensors/capture")
+MODULO3_TOKEN = os.getenv("SPINO_MODULO3_TOKEN")
 
 MAX_TENTATIVAS = 3
 TIMEOUT_SEGUNDOS = 3
