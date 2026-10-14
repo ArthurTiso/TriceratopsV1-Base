@@ -8,8 +8,12 @@ venv/
 .venv/
 env/
 
+# Configuração local (contém o token do Módulo 3)
+.env
+
 # Dados gerados em runtime (não fazem parte do código-fonte)
 data.json
+data.json.tmp
 state.json
 data
 

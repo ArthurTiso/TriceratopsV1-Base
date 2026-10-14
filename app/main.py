@@ -1,97 +1,56 @@
 import time
-import sys
-import json
-import os
 
-from protocol.decoder import ProtocolDecoder
-from core.system_state import SystemState
-from core.processor import Processor
+from app.config import ARQUIVO_ESTADO, carregar_config
+from app.pipeline import Pipeline
 from sender.api_sender import ApiSender
-from sender.modulo3_payload import build_capture_payload
 
-#python -m app.main
+# python -m app.main
+# Configuração: arquivo .env na raiz do projeto (veja .env.example)
 
-#  CONTROLE AQUI
-USAR_RF = False  # True = Raspberry | False = Simulador
-TEAM_CODE = os.getenv("SPINO_TEAM_CODE")
-SEND_INTERVAL_SECONDS = float(os.getenv("SPINO_SEND_INTERVAL_SECONDS", "1"))
+
+def criar_receiver(config):
+    if config.receptor == "serial":
+        from receiver.serial_receiver import SerialReceiver
+        print(f"📡 Modo SERIAL — Arduino receptor em {config.porta_serial}")
+        return SerialReceiver(config.porta_serial, config.baud_serial)
+
+    from receiver.simulated_receiver import SimulatedReceiver
+    print(f"🧪 Modo SIMULADOR — firmware '{config.firmware_simulado}', perda RF {config.perda_rf_simulada:.0%}")
+    return SimulatedReceiver(firmware=config.firmware_simulado, perda_rf=config.perda_rf_simulada)
 
 
 def main():
     receiver = None
     sender = None
-    ultimo_status = None
-    ultimo_envio = 0.0
 
     try:
-        #  ESCOLHA DO RECEIVER
-        if USAR_RF:
-            from receiver.rf_receiver import RFReceiver
-            receiver = RFReceiver(gpio=27)
-            print("📡 Modo RF ativado")
+        config = carregar_config()
+        receiver = criar_receiver(config)
+        sender = ApiSender(config.modulo3_url, config.modulo3_token)
+        pipeline = Pipeline(
+            config.team_code,
+            sender,
+            arquivo_estado=ARQUIVO_ESTADO,
+            intervalo_envio_s=config.intervalo_envio_s,
+        )
 
-        else:
-            from receiver.simulated_receiver import SimulatedReceiver
-            receiver = SimulatedReceiver()
-            print("🧪 Modo SIMULADOR ativado")
-
-        decoder = ProtocolDecoder()
-        state = SystemState()
-        processor = Processor(state)
-        sender = ApiSender()
-
-        if not TEAM_CODE:
-            raise RuntimeError("Defina SPINO_TEAM_CODE antes de iniciar o Módulo 2")
-
-        print("Sistema iniciado. Aguardando pacotes...\n")
+        print(f"Equipe: {config.team_code} | Módulo 3: {config.modulo3_url}")
+        print("Sistema iniciado. Aguardando quadros do Módulo 1...\n")
 
         while True:
             pacote = receiver.receber()
-            time.sleep(0.4)
-            if not pacote:
-                continue
-
-            print("PACOTE:", pacote)
-
-            try:
-                dados = decoder.decodificar(pacote)
-
-                processor.processar(dados)
-
-                print("STATE:", state.get_snapshot())
-
-                with open("data.json", "w") as f:
-                    json.dump(state.get_snapshot(), f)
-
-                # A leitura RF ocorre na frequência máxima. O envio HTTP é
-                # amostrado em 1 Hz (configurável) para não atingir o limite
-                # da API. A ruptura é enviada imediatamente uma única vez.
-                agora_monotonic = time.monotonic()
-                ruptura_detectada = state.status == "BROKEN" and ultimo_status != "BROKEN"
-                amostra_devida = (
-                    state.status != "BROKEN"
-                    and agora_monotonic - ultimo_envio >= SEND_INTERVAL_SECONDS
-                )
-                if ruptura_detectada or amostra_devida:
-                    event = "completed" if state.status == "BROKEN" else "sample"
-                    sender.enviar(build_capture_payload(TEAM_CODE, dados, event))
-                    ultimo_envio = agora_monotonic
-                ultimo_status = state.status
-
-            except Exception as e:
-                print("ERRO:", e)
-
-            print("-" * 50)
-
-            #  IMPORTANTE PARA RF (não perder pacote)
-            time.sleep(0.1)
+            if pacote:
+                pipeline.processar_quadro(pacote)
+            else:
+                pipeline.verificar_inatividade()
+                # A serial já espera pelo timeout de leitura; o simulador não.
+                time.sleep(0.02)
 
     except KeyboardInterrupt:
         print("\nFinalizando sistema...")
 
     finally:
-        #  LIMPEZA GPIO (só RF tem isso)
-        if receiver and hasattr(receiver, 'cleanup'):
+        if receiver and hasattr(receiver, "cleanup"):
             receiver.cleanup()
 
         if sender:

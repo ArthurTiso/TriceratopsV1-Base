@@ -1,10 +1,8 @@
-# Dependências multiplataforma — necessárias para rodar o backend em modo
-# simulador (USAR_RF = False) e o dashboard, tanto no notebook quanto no Pi.
+# Dependências multiplataforma (Windows, Linux e Raspberry Pi).
 streamlit>=1.41   # versão mínima necessária para st.html()
 plotly>=5.18
 streamlit-autorefresh>=1.0.1
 requests>=2.31    # usado pelo ApiSender (envio HTTP pro Módulo 3)
+pyserial>=3.5     # usado pelo SerialReceiver (Arduino receptor via USB)
 
-# Dependências exclusivas do Raspberry Pi (modo RF/serial real) estão em
-# requirements-pi.txt — só precisa instalar lá quando for rodar com
-# USAR_RF = True, direto no hardware.
+# requirements-pi.txt só é necessário para os scripts em legacy/.

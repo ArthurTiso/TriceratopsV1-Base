@@ -1,6 +1,7 @@
 import streamlit as st
 import json
-import os
+from pathlib import Path
+
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 
@@ -11,6 +12,10 @@ st.set_page_config(page_title="Spino — Ensaio de Ponte", layout="wide")
 # ⏳ Tempo sem mudança de peso para acionar alerta visual (segundos)
 ALERTA_CRONOMETRO_SEGUNDOS = 45
 ZONA_ATENCAO_SEGUNDOS = 30  # a partir daqui a barra já sinaliza "atenção"
+
+# Mesmo arquivo gravado pelo backend (app/config.py), independente da pasta
+# de onde o streamlit foi iniciado.
+ARQUIVO_ESTADO = Path(__file__).resolve().parent.parent / "data.json"
 
 st_autorefresh(interval=1000, key="refresh")
 
@@ -34,11 +39,16 @@ def formatar_mmss(segundos):
     return f"{total // 60:02d}:{total % 60:02d}"
 
 
+def formatar_opcional(valor, sufixo):
+    # Bateria e deflexão ainda são enviadas como 0 pelo Módulo 1 (sem sensor).
+    return "—" if not valor else f"{valor}{sufixo}"
+
+
 def carregar_dados():
-    if not os.path.exists("data.json"):
+    if not ARQUIVO_ESTADO.exists():
         return None
     try:
-        with open("data.json", "r") as f:
+        with open(ARQUIVO_ESTADO, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return None
@@ -174,13 +184,16 @@ bateria = data.get("bateria", 0)
 angulo = data.get("angulo", 0)
 tempo = data.get("tempo", 0)
 segundos_desde_mudanca = data.get("segundos_desde_mudanca")
+equipe = data.get("equipe") or "—"
 
 # ---- barra superior ----
 st.html(
     '<div class="spino-topbar">'
-    f'<span>BATERIA <b>{bateria}%</b></span>'
+    f'<span>EQUIPE <b>{equipe}</b></span>'
     '<span class="divider">│</span>'
-    f'<span>ÂNGULO <b>{angulo}°</b></span>'
+    f'<span>BATERIA <b>{formatar_opcional(bateria, "%")}</b></span>'
+    '<span class="divider">│</span>'
+    f'<span>DEFLEXÃO <b>{formatar_opcional(angulo, "")}</b></span>'
     '<span class="divider">│</span>'
     f'<span>DURAÇÃO <b>{tempo}s</b></span>'
     '</div>'
@@ -227,8 +240,8 @@ if status == "BROKEN":
 st.html(
     f'<div class="spino-hero">{crack_svg}'
     '<div class="eyebrow">PESO ATUAL</div>'
-    f'<div class="valor">{peso_atual}<small> kg</small></div>'
-    f'<div class="registro">REGISTRO MÁXIMO — {peso_max} kg</div>'
+    f'<div class="valor">{peso_atual:.1f}<small> kg</small></div>'
+    f'<div class="registro">REGISTRO MÁXIMO — {peso_max:.1f} kg</div>'
     '</div>'
 )
 
@@ -247,7 +260,7 @@ if historico:
         mode="lines+markers",
         line=dict(color="#4C7A96", width=2.5),
         marker=dict(color="#F2C230", size=5),
-        hovertemplate="t=%{x}s · %{y}kg<extra></extra>",
+        hovertemplate="t=%{x}s · %{y:.1f} kg<extra></extra>",
     ))
     fig.update_layout(
         height=360,
