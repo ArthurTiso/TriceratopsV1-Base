@@ -63,6 +63,7 @@ class ControleEnsaio:
         self._equipe_pendente = None    # equipe que começa quando a tara terminar
         self._tara_pedida_em = None     # aguardando o Arduino confirmar a tara
         self._inicio = None
+        self._inicio_tara = None        # base do gráfico fora de ensaio
         self._ultima_linha = clock()
         self._colapso_desde = None
         self._status_antes_da_tara = IDLE
@@ -152,6 +153,7 @@ class ControleEnsaio:
             self._encerrar(IDLE)
             eventos.append(INTERROMPIDO)
         self._tara_pedida_em = None
+        self._inicio_tara = None
         self.state.set_status(TARANDO, "Tarando: mantenha a balança sem carga.")
         return eventos
 
@@ -159,6 +161,7 @@ class ControleEnsaio:
         self._tara_pedida_em = None
         self.state.reset()
         self.state.peso_atual = 0.0
+        self._inicio_tara = agora
         if self._equipe_pendente is None:
             self.state.set_status(IDLE)
             return []
@@ -181,6 +184,9 @@ class ControleEnsaio:
 
         self.state.atualizar_carga(medida.carga_kg, medida.pico_kg)
         if not self.em_ensaio:
+            # Fora de ensaio o gráfico segue a balança desde a última tara.
+            if self.state.status == IDLE and self._inicio_tara is not None:
+                self.state.registrar_ponto(agora - self._inicio_tara)
             return []
 
         self.state.registrar_ponto(agora - self._inicio)
@@ -206,5 +212,6 @@ class ControleEnsaio:
             self.state.tempo = self.tempo_ensaio()
         self.em_ensaio = False
         self._inicio = None
+        self._inicio_tara = None  # congela o gráfico até a próxima tara
         self._colapso_desde = None
         self.state.set_status(status)

@@ -25,7 +25,7 @@ class SystemState:
         """Zera os dados do ensaio (nova tara)."""
         self.peso_max = 0.0
         self.tempo = 0.0
-        self.historico = []  # [(tempo_s, peso_kg)]
+        self.historico = []  # [(tempo_s, carga_kg, pico_kg)]
         self.ultimo_update = None
         # Cronômetro: marca quando a carga mudou pela última vez
         self.ultima_mudanca_peso = None
@@ -40,7 +40,7 @@ class SystemState:
 
     def registrar_ponto(self, tempo_s):
         self.tempo = tempo_s
-        ponto = (round(tempo_s, 1), self.peso_atual)
+        ponto = (round(tempo_s, 1), self.peso_atual, self.peso_max)
         if self.historico and self.historico[-1][0] == ponto[0]:
             self.historico[-1] = ponto
         else:

@@ -182,7 +182,6 @@ if not data:
 status = data.get("status", "UNKNOWN")
 meta = status_meta(status)
 
-peso_atual = data.get("peso_atual", 0)
 peso_max = data.get("peso_max", 0)
 tempo = data.get("tempo", 0)
 segundos_desde_mudanca = data.get("segundos_desde_mudanca")
@@ -240,39 +239,41 @@ if status in ("BROKEN", "FINALIZADO"):
 
 st.html(
     f'<div class="spino-hero">{crack_svg}'
-    '<div class="eyebrow">CARGA ATUAL</div>'
-    f'<div class="valor">{peso_atual:.1f}<small> kg</small></div>'
-    f'<div class="registro">CARGA MÁXIMA — {peso_max:.1f} kg</div>'
+    '<div class="eyebrow">CARGA MÁXIMA</div>'
+    f'<div class="valor">{peso_max:.1f}<small> kg</small></div>'
     '</div>'
 )
 
-# ---- gráfico peso × tempo ----
+# ---- gráfico carga máxima × tempo ----
+# Cada ponto do histórico é (tempo_s, carga_kg, pico_kg); o gráfico mostra o
+# pico, que só sobe desde a última tara.
 historico = data.get("historico", [])
+tempos = [p[0] for p in historico]
+picos = [p[2] if len(p) > 2 else p[1] for p in historico]
 
-st.html('<div class="spino-chart-label">PESO × TEMPO (kg / s)</div>')
+st.html('<div class="spino-chart-label">CARGA MÁXIMA × TEMPO (kg / s)</div>')
 
-if historico:
-    tempos = [p[0] for p in historico]
-    pesos = [p[1] for p in historico]
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=tempos, y=pesos,
-        mode="lines+markers",
-        line=dict(color="#4C7A96", width=2.5),
-        marker=dict(color="#F2C230", size=5),
-        hovertemplate="t=%{x:.1f}s · %{y:.1f} kg<extra></extra>",
-    ))
-    fig.update_layout(
-        height=360,
-        margin=dict(l=10, r=10, t=10, b=10),
-        paper_bgcolor="#1C242B",
-        plot_bgcolor="#1C242B",
-        font=dict(color="#E8ECEF", family="IBM Plex Mono", size=13),
-        xaxis=dict(title="tempo (s)", gridcolor="#2C3740", zeroline=False),
-        yaxis=dict(title="peso (kg)", gridcolor="#2C3740", zeroline=False),
-        showlegend=False,
+fig = go.Figure()
+fig.add_trace(go.Scatter(
+    x=tempos, y=picos,
+    mode="lines+markers",
+    line=dict(color="#4C7A96", width=2.5, shape="hv"),
+    marker=dict(color="#F2C230", size=5),
+    hovertemplate="t=%{x:.1f}s · %{y:.1f} kg<extra></extra>",
+))
+if not historico:
+    fig.add_annotation(
+        text="aguardando leituras da balança", showarrow=False,
+        xref="paper", yref="paper", x=0.5, y=0.5, font=dict(color="#7C8894"),
     )
-    st.plotly_chart(fig, config={"displayModeBar": False})
-else:
-    st.html('<div style="color: #7C8894; text-align:center; padding: 30px 0;">ainda não há dados suficientes para o gráfico</div>')
+fig.update_layout(
+    height=360,
+    margin=dict(l=10, r=10, t=10, b=10),
+    paper_bgcolor="#1C242B",
+    plot_bgcolor="#1C242B",
+    font=dict(color="#E8ECEF", family="IBM Plex Mono", size=13),
+    xaxis=dict(title="tempo (s)", gridcolor="#2C3740", zeroline=False, rangemode="tozero"),
+    yaxis=dict(title="carga máxima (kg)", gridcolor="#2C3740", zeroline=False, rangemode="tozero"),
+    showlegend=False,
+)
+st.plotly_chart(fig, config={"displayModeBar": False})

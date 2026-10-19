@@ -58,6 +58,14 @@ class ControleEnsaioTest(unittest.TestCase):
         self.assertEqual(self.state.status, IDLE)
         self.assertFalse(self.controle.em_ensaio)
 
+    def test_chart_follows_the_peak_since_the_last_tare_outside_a_test(self):
+        self.tara_do_arduino()
+        self.linha(medida(3.0))
+        self.linha(medida(1.0, pico_kg=3.0))
+
+        self.assertEqual([p[2] for p in self.state.historico], [3.0, 3.0])
+        self.assertEqual(self.state.status, IDLE)
+
     def test_new_test_starts_when_the_requested_tare_finishes(self):
         self.assertTrue(self.controle.novo_ensaio("MOCK002"))
         self.assertEqual(self.state.status, TARANDO)
@@ -74,7 +82,7 @@ class ControleEnsaioTest(unittest.TestCase):
             self.linha(medida(1.0))
 
         self.assertAlmostEqual(self.state.tempo, 3.0)
-        self.assertEqual(self.state.historico[0], (0.0, 0.0))
+        self.assertEqual(self.state.historico[0], (0.0, 0.0, 0.0))
 
     def test_cannot_start_two_tests_at_once(self):
         self.iniciar_ensaio()
