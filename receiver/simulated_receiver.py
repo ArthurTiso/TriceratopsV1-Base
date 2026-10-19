@@ -1,153 +1,128 @@
-"""Simula o Arduino transmissor do Módulo 1, com o mesmo comportamento do firmware:
+"""Simula o Arduino do Módulo 1 (firmware/modulo1_balanca_usb) na USB serial.
 
-* INICIO      — tela inicial, sem transmissão (operador ainda não tocou INICIAR);
-* TARANDO     — 20 leituras do HX711 (~2 s), sem transmissão;
-* MONITORANDO — carga média em janelas de 2 s, quadro a cada 500 ms,
-                quadro imediato logo após a tara;
-* COLAPSO     — carga <= 20% da máxima (com máxima >= 2 kg); quadro imediato e
-                repetição do quadro final, com o tempo congelado, até o
-                operador tocar em REINICIAR, que volta para INICIO.
+Reproduz o mesmo comportamento do firmware:
 
-Os quadros saem de protocol.encoder.montar_quadro, igual a montarQuadro().
+* ao "conectar", imprime o cabeçalho e faz a tara de inicialização;
+* HX711 a 10 leituras/s; tara com 20 leituras (~2 s);
+* MEDIA_KG = média móvel das últimas 10 leituras; PICO_ABS_KG = maior
+  magnitude da média desde a tara;
+* uma linha a cada 500 ms;
+* comando "t" refaz a tara e zera média e pico.
+
+Para simular um ensaio, cada tara pedida pelo operador inicia um carregamento:
+a carga sobe até um ponto de ruptura aleatório e então cai para perto de zero.
 """
 
 import random
 import time
+from collections import deque
 
-from protocol.encoder import montar_quadro
+from protocol.balanca import COMANDO_TARA, formatar_medida
 from receiver.base_receiver import BaseReceiver
 
-INICIO = "INICIO"
-TARANDO = "TARANDO"
-MONITORANDO = "MONITORANDO"
-COLAPSO = "COLAPSO"
+TAXA_HX711_HZ = 10
+INTERVALO_SERIAL_S = 0.5
+TOTAL_AMOSTRAS_TARA = 20
+TAMANHO_MEDIA = 10
+ESCALA = -26422.05
+OFFSET = 8423190
 
-# Mesmos valores do firmware do Módulo 1
-INTERVALO_RF_S = 0.5
-JANELA_PESO_S = 2.0
-PESO_MINIMO_COLAPSO_KG = 2.0
-FRACAO_COLAPSO = 0.20
+CABECALHO = (
+    "SPINO - balanca no PC via USB",
+    "HX711: DT=46 | SCK=47 | Monitor Serial=115200 baud",
+    "Escala de calibracao: -26422.05",
+    "MEDIA_KG: media movel das ultimas 10 amostras, mantendo o sinal.",
+    "PICO_ABS_KG: maior magnitude da media desde a tara.",
+    "Comando: t + Enviar, sem carga, para tarar e zerar o pico.",
+)
 
 
 class SimulatedReceiver(BaseReceiver):
-    def __init__(
-        self,
-        firmware="atual",
-        perda_rf=0.0,
-        clock=time.monotonic,
-        rng=None,
-        pausa_inicio_s=3.0,
-        duracao_tara_s=2.0,
-        duracao_colapso_s=8.0,
-    ):
-        """
-        firmware: "atual"     → flag 1 durante todo o ensaio (firmware de hoje);
-                  "corrigido" → flag 0 durante o ensaio e 1 só no colapso.
-        perda_rf: fração de quadros perdidos no rádio (0.0 a 1.0).
-        """
-        self.firmware = firmware
-        self.perda_rf = perda_rf
+    def __init__(self, clock=time.monotonic, rng=None, espera_carga_s=3.0, ruido_kg=0.03):
         self._clock = clock
         self._rng = rng or random.Random()
-        self.pausa_inicio_s = pausa_inicio_s
-        self.duracao_tara_s = duracao_tara_s
-        self.duracao_colapso_s = duracao_colapso_s
+        self.espera_carga_s = espera_carga_s
+        self.ruido_kg = ruido_kg
 
-        self.estado = INICIO
-        self._inicio_estado = self._clock()
-        self._ultimo_quadro = None
-        self._reiniciar_medicao()
+        self._fila = deque(CABECALHO)
+        self._ultima_leitura = self._clock()
+        self._ultima_linha = self._clock()
+        self._carregamento = None
+        self._iniciar_tara(com_carregamento=False)
 
     def receber(self):
         agora = self._clock()
-        enviar_agora = self._avancar(agora)
+        while agora - self._ultima_leitura >= 1 / TAXA_HX711_HZ:
+            self._ultima_leitura += 1 / TAXA_HX711_HZ
+            self._ler_hx711(self._ultima_leitura)
 
-        if self.estado not in (MONITORANDO, COLAPSO):
-            return None
-        if not enviar_agora and agora - self._ultimo_quadro < INTERVALO_RF_S:
-            return None
+        if not self._fila and agora - self._ultima_linha >= INTERVALO_SERIAL_S:
+            self._ultima_linha = agora
+            self._fila.append(self._linha_periodica())
 
-        self._ultimo_quadro = agora
-        if self._rng.random() < self.perda_rf:
-            return None
-        return self.quadro_atual(agora)
+        return self._fila.popleft() if self._fila else None
 
-    def quadro_atual(self, agora=None):
-        agora = self._clock() if agora is None else agora
-        if self.estado == MONITORANDO:
-            tempo = int(agora - self._inicio_ensaio)
-        else:
-            tempo = int(self._tempo_colapso)
+    def enviar_comando(self, comando: str):
+        if comando.lower() == COMANDO_TARA:
+            self._iniciar_tara(com_carregamento=True)
+        return True
 
-        if self.firmware == "corrigido":
-            flag = 1 if self.estado == COLAPSO else 0
-        else:
-            flag = 1 if self.estado in (MONITORANDO, COLAPSO) else 0
+    # ---- firmware simulado ----
 
-        return montar_quadro(self.peso_max, self.peso_atual, tempo, flag)
+    def _iniciar_tara(self, com_carregamento):
+        self.tarando = True
+        self._contador_tara = 0
+        self._com_carregamento = com_carregamento
+        self._carregamento = None
+        self.amostra_kg = 0.0
+        self.pico_kg = 0.0
+        self._amostras = deque(maxlen=TAMANHO_MEDIA)
+        self._fila.append("Tarando: deixe a balanca sem carga (20 amostras).")
 
-    # ---- máquina de estados ----
+    def _ler_hx711(self, instante):
+        if self.tarando:
+            self._contador_tara += 1
+            if self._contador_tara >= TOTAL_AMOSTRAS_TARA:
+                self.tarando = False
+                self._fila.append(f"Tara concluida. Offset={OFFSET}")
+                if self._com_carregamento:
+                    self._carregamento = Carregamento(instante + self.espera_carga_s, self._rng)
+            return
 
-    def _avancar(self, agora) -> bool:
-        """Avança os estados; devolve True quando o firmware enviaria um quadro imediato."""
-        if self.estado == INICIO and agora - self._inicio_estado >= self.pausa_inicio_s:
-            self._mudar_estado(TARANDO, agora)
+        carga = self._carregamento.carga(instante) if self._carregamento else 0.0
+        self.amostra_kg = carga + self._rng.gauss(0, self.ruido_kg)
+        self._amostras.append(self.amostra_kg)
+        self.pico_kg = max(self.pico_kg, abs(self.media_kg))
 
-        if self.estado == TARANDO and agora - self._inicio_estado >= self.duracao_tara_s:
-            self._mudar_estado(MONITORANDO, agora)
-            self._reiniciar_medicao()
-            self._inicio_ensaio = agora
-            self._inicio_janela = agora
-            return True  # processarTara() envia imediatamente
+    @property
+    def media_kg(self):
+        return sum(self._amostras) / len(self._amostras) if self._amostras else 0.0
 
-        if self.estado == MONITORANDO:
-            while agora - self._inicio_janela >= JANELA_PESO_S:
-                self._inicio_janela += JANELA_PESO_S
-                self._fechar_janela()
-                if self._entrou_em_colapso():
-                    self._tempo_colapso = self._inicio_janela - self._inicio_ensaio
-                    self._mudar_estado(COLAPSO, agora)
-                    return True  # entrarEmColapso() envia imediatamente
+    @property
+    def rompeu(self):
+        return self._carregamento is not None and self._carregamento.rompeu
 
-        if self.estado == COLAPSO and agora - self._inicio_estado >= self.duracao_colapso_s:
-            self._mudar_estado(INICIO, agora)  # operador tocou em REINICIAR
+    def _linha_periodica(self):
+        if self.tarando:
+            return f"TARA={self._contador_tara}/{TOTAL_AMOSTRAS_TARA} | BRUTO={OFFSET}"
+        bruto = OFFSET + self.amostra_kg * ESCALA
+        return formatar_medida(self.amostra_kg, self.media_kg, self.pico_kg, bruto)
 
-        return False
 
-    def _mudar_estado(self, estado, agora):
-        self.estado = estado
-        self._inicio_estado = agora
+class Carregamento:
+    """Carga aplicada à ponte: sobe em rampa e despenca na ruptura."""
 
-    def _reiniciar_medicao(self):
-        self.peso_atual = 0.0
-        self.peso_max = 0.0
-        self._inicio_ensaio = None
-        self._inicio_janela = None
-        self._tempo_colapso = 0.0
-        self._janelas = 0
-        self._rompendo = False
-        self._rompeu = False
+    def __init__(self, inicio, rng):
+        self.inicio = inicio
+        self.taxa_kg_s = rng.uniform(0.4, 1.2)
+        self.carga_ruptura_kg = rng.uniform(4.0, 20.0)
+        self.residual_kg = rng.uniform(0.0, 0.3)
+        self.rompeu = False
 
-    def _fechar_janela(self):
-        """Gera a média da janela de 2 s, como processarJanelaPeso()."""
-        self._janelas += 1
-        if self._rompeu:
-            media = self.peso_max * self._rng.uniform(0.0, 0.1)
-        elif self._rompendo:
-            # A ponte rompe no meio da janela: a média mistura antes e depois.
-            self._rompeu = True
-            media = self.peso_atual * self._rng.uniform(0.15, 0.6)
-        else:
-            media = self.peso_atual + self._rng.uniform(0.2, 1.5)
-            chance_ruptura = min(0.03 + 0.01 * self._janelas, 0.3)
-            if self.peso_max >= PESO_MINIMO_COLAPSO_KG and self._rng.random() < chance_ruptura:
-                self._rompendo = True
-
-        self.peso_atual = round(max(media, 0.0), 2)
-        self.peso_max = max(self.peso_max, self.peso_atual)
-
-    def _entrou_em_colapso(self):
-        return (
-            self.peso_max >= PESO_MINIMO_COLAPSO_KG
-            and self.peso_atual <= self.peso_max * FRACAO_COLAPSO
-        )
+    def carga(self, instante):
+        if instante < self.inicio:
+            return 0.0
+        carga = (instante - self.inicio) * self.taxa_kg_s
+        if carga >= self.carga_ruptura_kg:
+            self.rompeu = True
+        return self.residual_kg if self.rompeu else carga

@@ -1,5 +1,7 @@
 """Utilitários compartilhados pelos testes."""
 
+from protocol.balanca import Medida
+
 
 class RelogioFalso:
     """Substitui time.monotonic para controlar o tempo nos testes."""
@@ -14,13 +16,7 @@ class RelogioFalso:
         self.agora += segundos
 
 
-def dados(peso_atual, peso_max, tempo, flag=1):
-    """Quadro já decodificado, como o ProtocolDecoder devolve."""
-    return {
-        "bateria": 0,
-        "peso_max": peso_max,
-        "peso_atual": peso_atual,
-        "angulo": 0,
-        "tempo": tempo,
-        "flag": flag,
-    }
+def medida(media_kg, pico_kg=None):
+    """Linha de medida já interpretada, como o Arduino envia a cada 0,5 s."""
+    pico = abs(media_kg) if pico_kg is None else pico_kg
+    return Medida(amostra_kg=media_kg, media_kg=media_kg, pico_kg=pico, bruto=0)

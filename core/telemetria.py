@@ -1,18 +1,17 @@
-"""Decide quais eventos de cada quadro devem ser enviados ao Módulo 3.
+"""Decide quais eventos devem ser enviados ao Módulo 3.
 
 * ``started``   — uma vez, no início de cada ensaio;
 * ``sample``    — no máximo um por intervalo (1 s por padrão, abaixo do
   limite de 120 req/min da API), e imediatamente quando a carga supera o
-  maior valor já enviado, para que o pico do ensaio sempre chegue ao
-  Módulo 3 (ele calcula a carga de ruptura pelo maior ``load_grams``);
-* ``completed`` — uma única vez, no colapso. Depois disso nada mais é
-  enviado até o próximo ensaio: no Módulo 3, qualquer amostra após o
-  ``completed`` voltaria a equipe para "running".
+  maior valor já enviado;
+* ``completed`` — uma única vez, no colapso ou no encerramento manual. Depois
+  disso nada mais é enviado até o próximo ensaio: no Módulo 3, qualquer
+  amostra após o ``completed`` voltaria a equipe para "running".
 """
 
 import time
 
-from core.processor import COLAPSO, NOVO_ENSAIO
+from core.ensaio import COLAPSO, FIM_MANUAL, INTERROMPIDO, NOVO_ENSAIO
 from core.system_state import RUNNING
 
 STARTED = "started"
@@ -28,7 +27,7 @@ class PoliticaEnvio:
         self._maior_carga_enviada = None
         self._encerrado = True  # nada a enviar antes do primeiro ensaio
 
-    def decidir(self, eventos, status, dados) -> list:
+    def decidir(self, eventos, status, carga_kg) -> list:
         agora = self._clock()
         envios = []
 
@@ -40,13 +39,15 @@ class PoliticaEnvio:
         if self._encerrado:
             return envios
 
-        if COLAPSO in eventos:
+        if COLAPSO in eventos or FIM_MANUAL in eventos:
             self._encerrado = True
             envios.append(COMPLETED)
+        elif INTERROMPIDO in eventos:
+            self._encerrado = True
         elif not envios and status == RUNNING:
             novo_pico = (
                 self._maior_carga_enviada is not None
-                and dados["peso_atual"] > self._maior_carga_enviada
+                and carga_kg > self._maior_carga_enviada
             )
             intervalo_cumprido = (
                 self._ultimo_envio is None
@@ -57,8 +58,7 @@ class PoliticaEnvio:
 
         if envios:
             self._ultimo_envio = agora
-            carga = dados["peso_atual"]
-            if self._maior_carga_enviada is None or carga > self._maior_carga_enviada:
-                self._maior_carga_enviada = carga
+            if self._maior_carga_enviada is None or carga_kg > self._maior_carga_enviada:
+                self._maior_carga_enviada = carga_kg
 
         return envios
