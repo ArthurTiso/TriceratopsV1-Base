@@ -3,21 +3,27 @@ import unittest
 from unittest import mock
 
 from apoio import RelogioFalso
-from protocol.decoder import ProtocolDecoder
+from protocol.balanca import Medida, TaraConcluida, TaraIniciada, interpretar_linha
 from receiver.serial_receiver import SerialReceiver
-from receiver.simulated_receiver import COLAPSO, INICIO, MONITORANDO, SimulatedReceiver
+from receiver.simulated_receiver import SimulatedReceiver
 
 
 class SerialFalsa:
     def __init__(self, linhas):
         self.linhas = list(linhas)
-        self.fechada = False
+        self.escrito = b""
 
     def readline(self):
         return self.linhas.pop(0) if self.linhas else b""
 
+    def write(self, dados):
+        self.escrito += dados
+
+    def flush(self):
+        pass
+
     def close(self):
-        self.fechada = True
+        pass
 
 
 class SerialReceiverTest(unittest.TestCase):
@@ -26,101 +32,87 @@ class SerialReceiverTest(unittest.TestCase):
         with mock.patch("builtins.print"):
             return SerialReceiver("COM3", abrir_serial=lambda porta, baud, timeout: self.serial)
 
-    def test_reads_one_frame_per_line(self):
-        receiver = self.criar([b"***000012301230000006107###\r\n"])
+    def test_returns_each_line_without_line_breaks(self):
+        receiver = self.criar([b"AMOSTRA_KG=1.0 | MEDIA_KG=1.0 | PICO_ABS_KG=1.0 | BRUTO=5\r\n"])
 
-        self.assertEqual(receiver.receber(), "***000012301230000006107###")
+        self.assertEqual(receiver.receber(), "AMOSTRA_KG=1.0 | MEDIA_KG=1.0 | PICO_ABS_KG=1.0 | BRUTO=5")
 
-    def test_ignores_boot_messages_noise_and_timeouts(self):
-        receiver = self.criar([b"Receptor SPINO pronto\r\n", b"\xff\x00lixo\r\n", b""])
+    def test_timeouts_and_blank_lines_return_none(self):
+        receiver = self.criar([b"", b"\r\n"])
 
-        self.assertEqual([receiver.receber() for _ in range(3)], [None, None, None])
+        self.assertEqual([receiver.receber(), receiver.receber()], [None, None])
+
+    def test_sends_the_tare_command(self):
+        receiver = self.criar([])
+
+        self.assertTrue(receiver.enviar_comando("t"))
+        self.assertEqual(self.serial.escrito, b"t")
 
     def test_reconnects_after_the_cable_is_unplugged(self):
         relogio = RelogioFalso()
         tentativas = []
 
         def abrir(porta, baud, timeout):
-            tentativas.append(relogio())
+            tentativas.append(baud)
             if len(tentativas) == 2:
                 raise OSError("porta ocupada")
-            return SerialFalsa([b"***000012301230000006107###\n"])
+            return SerialFalsa([b"Tara concluida. Offset=1\n"])
 
         with mock.patch("builtins.print"):
             receiver = SerialReceiver("COM3", abrir_serial=abrir, clock=relogio)
             receiver._serial.readline = mock.Mock(side_effect=OSError("desconectado"))
 
             self.assertIsNone(receiver.receber())       # erro: fecha a porta
+            self.assertFalse(receiver.enviar_comando("t"))
             relogio.avancar(2)
             self.assertIsNone(receiver.receber())       # 2ª tentativa falha
-            self.assertIsNone(receiver.receber())       # espera antes de tentar de novo
             relogio.avancar(2)
-            self.assertEqual(receiver.receber(), "***000012301230000006107###")
+            self.assertEqual(receiver.receber(), "Tara concluida. Offset=1")
 
-        self.assertEqual(len(tentativas), 3)
+        self.assertEqual(tentativas, [115200] * 3)
 
 
 class SimulatedReceiverTest(unittest.TestCase):
     def setUp(self):
         self.relogio = RelogioFalso()
-        self.decoder = ProtocolDecoder()
+        self.receiver = SimulatedReceiver(clock=self.relogio, rng=random.Random(3))
 
-    def coletar(self, receiver, segundos, passo=0.1):
-        quadros = []
+    def coletar(self, segundos, passo=0.05):
+        eventos = []
         for _ in range(int(segundos / passo)):
-            with mock.patch("builtins.print"):
-                quadro = receiver.receber()
-            if quadro:
-                quadros.append((self.relogio(), receiver.estado, self.decoder.decodificar(quadro)))
+            linha = self.receiver.receber()
+            while linha:
+                eventos.append(interpretar_linha(linha))
+                linha = self.receiver.receber()
             self.relogio.avancar(passo)
-        return quadros
+        return [e for e in eventos if e is not None]
 
-    def criar(self, firmware="atual", seed=1):
-        return SimulatedReceiver(firmware=firmware, clock=self.relogio, rng=random.Random(seed))
+    def test_boots_with_header_and_automatic_tare(self):
+        eventos = self.coletar(3)
 
-    def test_silent_before_the_tare_finishes(self):
-        receiver = self.criar()
+        self.assertIsInstance(eventos[0], TaraIniciada)
+        self.assertTrue(any(isinstance(e, TaraConcluida) for e in eventos))
 
-        self.assertEqual(self.coletar(receiver, 4.9), [])
-        self.assertIn(receiver.estado, (INICIO, "TARANDO"))
+    def test_idle_scale_reads_about_zero_twice_per_second(self):
+        self.coletar(3)
 
-    def test_sends_two_frames_per_second_during_the_test(self):
-        receiver = self.criar()
-        self.coletar(receiver, 5.0)
+        medidas = [e for e in self.coletar(5) if isinstance(e, Medida)]
 
-        quadros = [q for q in self.coletar(receiver, 4.0) if q[1] == MONITORANDO]
+        self.assertIn(len(medidas), (9, 10, 11))
+        self.assertTrue(all(m.carga_kg < 0.2 for m in medidas))
 
-        self.assertGreaterEqual(len(quadros), 7)
-        self.assertLessEqual(len(quadros), 9)
+    def test_tare_command_starts_a_load_until_rupture(self):
+        self.coletar(3)
 
-    def test_current_firmware_sends_flag_one_during_the_whole_test(self):
-        quadros = self.coletar(self.criar("atual"), 120)
+        self.receiver.enviar_comando("t")
+        medidas = [e for e in self.coletar(60) if isinstance(e, Medida)]
 
-        self.assertTrue(quadros)
-        self.assertTrue(all(d["flag"] == 1 for _, _, d in quadros))
-
-    def test_corrected_firmware_sends_flag_one_only_on_collapse(self):
-        quadros = self.coletar(self.criar("corrigido"), 120)
-
-        for _, estado, d in quadros:
-            self.assertEqual(d["flag"], 1 if estado == COLAPSO else 0)
-
-    def test_collapse_freezes_time_and_follows_the_arduino_rule(self):
-        quadros = self.coletar(self.criar(), 120)
-        colapso = [d for _, estado, d in quadros if estado == COLAPSO]
-
-        self.assertTrue(colapso, "o ensaio simulado deveria colapsar em 2 minutos")
-        primeiro = colapso[0]
-        self.assertGreaterEqual(primeiro["peso_max"], 2.0)
-        self.assertLessEqual(primeiro["peso_atual"], primeiro["peso_max"] * 0.2 + 1e-9)
-        self.assertEqual({d["tempo"] for d in colapso[:10]}, {primeiro["tempo"]})
-
-    def test_restarts_with_a_new_test_after_the_collapse(self):
-        quadros = self.coletar(self.criar(), 240)
-        tempos = [d["tempo"] for _, _, d in quadros]
-
-        reinicios = sum(1 for a, b in zip(tempos, tempos[1:]) if b < a)
-        self.assertGreaterEqual(reinicios, 1)
+        pico = max(m.pico_kg for m in medidas)
+        self.assertGreaterEqual(pico, 4.0)
+        self.assertTrue(self.receiver.rompeu)
+        self.assertLess(medidas[-1].carga_kg, pico * 0.2)
+        # O pico do Arduino acompanha a maior média, inclusive entre as linhas
+        self.assertGreaterEqual(pico, max(m.carga_kg for m in medidas))
 
 
 if __name__ == "__main__":

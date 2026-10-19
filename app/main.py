@@ -1,6 +1,7 @@
 import time
 
 from app.config import ARQUIVO_ESTADO, carregar_config
+from app.console import AJUDA, Console
 from app.pipeline import Pipeline
 from sender.api_sender import ApiSender
 
@@ -11,12 +12,13 @@ from sender.api_sender import ApiSender
 def criar_receiver(config):
     if config.receptor == "serial":
         from receiver.serial_receiver import SerialReceiver
-        print(f"📡 Modo SERIAL — Arduino receptor em {config.porta_serial}")
+        print(f"📡 Balança (Módulo 1) via USB em {config.porta_serial}")
+        print("   O Arduino reinicia e faz a tara ao conectar: mantenha a balança SEM CARGA.")
         return SerialReceiver(config.porta_serial, config.baud_serial)
 
     from receiver.simulated_receiver import SimulatedReceiver
-    print(f"🧪 Modo SIMULADOR — firmware '{config.firmware_simulado}', perda RF {config.perda_rf_simulada:.0%}")
-    return SimulatedReceiver(firmware=config.firmware_simulado, perda_rf=config.perda_rf_simulada)
+    print("🧪 Modo SIMULADOR — balança simulada; cada 'novo' simula um ensaio até a ruptura")
+    return SimulatedReceiver()
 
 
 def main():
@@ -29,27 +31,39 @@ def main():
         sender = ApiSender(config.modulo3_url, config.modulo3_token)
         pipeline = Pipeline(
             config.team_code,
+            receiver,
             sender,
             arquivo_estado=ARQUIVO_ESTADO,
             intervalo_envio_s=config.intervalo_envio_s,
+            peso_minimo_colapso_kg=config.peso_minimo_colapso_kg,
+            fracao_colapso=config.fracao_colapso,
+            confirmacao_colapso_s=config.confirmacao_colapso_s,
         )
+        console = Console()
 
-        print(f"Equipe: {config.team_code} | Módulo 3: {config.modulo3_url}")
-        print("Sistema iniciado. Aguardando quadros do Módulo 1...\n")
+        print(f"Módulo 3: {config.modulo3_url}")
+        if config.team_code:
+            print(f"Equipe padrão: {config.team_code}")
+        print(AJUDA)
 
         while True:
-            pacote = receiver.receber()
-            if pacote:
-                pipeline.processar_quadro(pacote)
+            comando = console.proximo()
+            if comando is not None and not pipeline.executar_comando(comando):
+                break
+
+            linha = receiver.receber()
+            if linha:
+                pipeline.processar_linha(linha)
             else:
-                pipeline.verificar_inatividade()
+                pipeline.verificar()
                 # A serial já espera pelo timeout de leitura; o simulador não.
                 time.sleep(0.02)
 
     except KeyboardInterrupt:
-        print("\nFinalizando sistema...")
+        pass
 
     finally:
+        print("\nFinalizando sistema...")
         if receiver and hasattr(receiver, "cleanup"):
             receiver.cleanup()
 

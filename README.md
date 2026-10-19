@@ -1,50 +1,55 @@
-# Spino — Módulo 2 · Processamento de borda
+# Spino — Módulo 2 · Processamento no notebook
 
-Recebe os quadros do Módulo 1 (Arduino transmissor 433 MHz) por meio de um
-Arduino receptor ligado via USB ao Raspberry Pi, acompanha o ciclo de cada
-ensaio, exibe os dados na interface local e envia a telemetria ao Módulo 3
-(API Laravel) sem bloquear a leitura.
+O Módulo 1 (células de carga + HX711 + Arduino) fica ligado por cabo USB a um
+notebook. O Módulo 2 lê a balança, controla cada ensaio (tara, cronômetro e
+detecção de ruptura), exibe os dados na interface local e envia a telemetria
+ao Módulo 3 (API Laravel).
 
 ```
-Arduino transmissor ──RF 433 MHz (RH_ASK)──► Arduino receptor ──USB serial──► Raspberry Pi
-                                                                                 │
-                                    receiver/ → protocol/ → core/ ───────────────┤
-                                                                ├─► data.json ──► dashboard/ (Streamlit)
-                                                                └─► sender/ ────► Módulo 3 (HTTP POST)
+Células de carga ─► HX711 ─► Arduino (Módulo 1) ──USB serial 115200──► Notebook (Módulo 2)
+                                                                          │
+                     receiver/ → protocol/ → core/ ───────────────────────┤
+                       ▲                         ├─► data.json ─► dashboard/ (Streamlit)
+          comandos do operador (terminal)        └─► sender/ ───► Módulo 3 (HTTP POST)
 ```
 
 | Pasta | Função |
 |---|---|
-| `firmware/receptor_rf/` | Sketch do Arduino receptor: RH_ASK → uma linha por quadro na serial |
-| `receiver/` | `SerialReceiver` (hardware) e `SimulatedReceiver` (reproduz o firmware do Módulo 1) |
-| `protocol/` | Decoder e encoder do quadro SPINO |
-| `core/` | Estado do ensaio, detecção de colapso e novo ensaio, política de envio |
+| `firmware/modulo1_balanca_usb/` | Firmware do Arduino do Módulo 1 |
+| `receiver/` | `SerialReceiver` (Arduino via USB) e `SimulatedReceiver` (reproduz o firmware) |
+| `protocol/` | Interpretação das linhas enviadas pelo Arduino |
+| `core/` | Estado, controle do ensaio (tara, cronômetro, colapso) e política de envio |
 | `sender/` | Contrato HTTP, envio em background e mock do Módulo 3 |
-| `app/` | Configuração, pipeline e loop principal |
+| `app/` | Configuração, console do operador, pipeline e loop principal |
 | `dashboard/` | Interface local |
-| `legacy/` | RF direto no GPIO do Pi (fora de uso) |
 
-## Protocolo do Módulo 1
+## Comunicação com o Módulo 1
+
+A cada 500 ms o Arduino envia uma linha:
 
 ```
-*** BAT CM   CA   DEF TEM  F CHK ###     (27 caracteres)
+AMOSTRA_KG=12.3 | MEDIA_KG=12.1 | PICO_ABS_KG=12.4 | BRUTO=-325112
 ```
 
-- `CM` / `CA`: carga máxima / atual em kg × 10 (`0123` = 12,3 kg);
-- `TEM`: segundos de ensaio, congelado no colapso;
-- `F`: 1 no colapso (firmware antigo: 1 durante todo o ensaio — ambos aceitos);
-- `BAT` / `DEF`: reservados, enviados como 0;
-- `CHK`: soma dos 3 últimos dígitos do corpo, módulo 100.
+- `MEDIA_KG`: média móvel das últimas 10 leituras do HX711 (com sinal);
+- `PICO_ABS_KG`: maior magnitude da média desde a última tara;
+- durante a tara: `TARA=n/20`; ao fim: `Tara concluida. Offset=...`;
+- sensor sem resposta: `ERRO: HX711 sem dados...`.
+
+O Módulo 2 envia `t` para tarar. Ao abrir a porta USB o Arduino reinicia e faz
+a tara de inicialização — a balança deve estar sem carga.
 
 ## Ciclo do ensaio
 
-| Situação | Detecção | Envio ao Módulo 3 |
+| Etapa | Como acontece | Envio ao Módulo 3 |
 |---|---|---|
-| Novo ensaio | primeiro quadro; após colapso, tempo diferente do congelado; tempo voltou | `started` |
-| Em andamento | — | `sample` a cada 1 s e a cada novo pico |
-| Colapso | flag de colapso, ou carga ≤ 20% da máxima (máx. ≥ 2 kg) com tempo parado por ≥ 2 s | `completed`, uma única vez |
-| Após colapso | quadro final repetido pelo Arduino | nenhum |
-| Sem quadros por 10 s | — | status `INACTIVE` no painel |
+| Início | operador digita `novo EQUIPE` → tara → cronômetro começa no fim da tara | `started` |
+| Em andamento | carga = \|MEDIA_KG\|, pico = PICO_ABS_KG | `sample` a cada 1 s e a cada novo pico |
+| Colapso | pico ≥ 2 kg e carga ≤ 20% do pico por ≥ 1 s | `completed` com o pico, uma única vez |
+| Encerramento manual | operador digita `fim` | `completed` com o pico |
+| Cancelamento | operador digita `cancelar` | nenhum |
+| Tara inesperada (Arduino reiniciado) | ensaio interrompido | nenhum |
+| Sem linhas por 5 s / erro no HX711 | status `INACTIVE` / `ERRO_SENSOR` no painel | pausado |
 
 ## Instalação
 
@@ -53,7 +58,7 @@ Python 3.10 ou superior.
 ```bash
 python -m venv .venv
 .venv\Scripts\activate          # Windows
-source .venv/bin/activate       # Linux / Raspberry Pi
+source .venv/bin/activate       # Linux
 pip install -r requirements.txt
 ```
 
@@ -62,27 +67,34 @@ terminal têm prioridade sobre o arquivo.
 
 | Variável | Descrição |
 |---|---|
-| `SPINO_TEAM_CODE` | Código da equipe em ensaio (aprovada no Módulo 3) |
+| `SPINO_RECEIVER` | `serial` (Arduino) ou `simulador` |
+| `SPINO_SERIAL_PORT` / `SPINO_SERIAL_BAUD` | Porta do Arduino (ex.: `COM3`) e 115200 |
+| `SPINO_TEAM_CODE` | Equipe usada quando `novo` é digitado sem código (opcional) |
 | `SPINO_MODULO3_URL` | Endpoint `/api/v1/sensors/capture` do Módulo 3 |
 | `SPINO_MODULO3_TOKEN` | Igual a `SENSORS_API_TOKEN` do Módulo 3 |
 | `SPINO_SEND_INTERVAL_SECONDS` | Intervalo mínimo entre amostras (padrão 1) |
-| `SPINO_RECEIVER` | `serial` (Arduino receptor) ou `simulador` |
-| `SPINO_SERIAL_PORT` / `SPINO_SERIAL_BAUD` | Ex.: `COM3` ou `/dev/ttyACM0`, 9600 |
-| `SPINO_SIM_FIRMWARE` / `SPINO_SIM_PERDA_RF` | Simulador: `atual` ou `corrigido`; fração de perda de quadros |
-
-No Raspberry Pi, o usuário precisa pertencer ao grupo `dialout` para abrir a
-porta serial.
+| `SPINO_COLAPSO_PESO_MINIMO_KG` / `_FRACAO` / `_CONFIRMACAO_S` | Regra de colapso (2,0 kg · 0,20 · 1,0 s) |
 
 ## Execução
 
 ```bash
-python -m app.main                       # Módulo 2
+python -m app.main                       # Módulo 2 (console do operador)
 streamlit run dashboard/app.py           # interface local
 python -m sender.mock_modulo3_server     # opcional: Módulo 3 simulado (porta 8000)
 ```
 
-O firmware do receptor (`firmware/receptor_rf/receptor_rf.ino`) usa a
-biblioteca RadioHead; o DATA do módulo 433 MHz fica no pino 2.
+Comandos no terminal do Módulo 2:
+
+| Comando | Ação |
+|---|---|
+| `novo [EQUIPE]` | tara a balança sem carga e inicia o ensaio |
+| `fim` | encerra o ensaio atual como concluído |
+| `cancelar` | descarta o ensaio atual |
+| `tara` | zera a balança fora de ensaio |
+| `ajuda` / `sair` | lista os comandos / encerra |
+
+O Monitor Serial da IDE do Arduino deve estar fechado: a porta USB só pode
+ser usada por um programa por vez.
 
 ## Testes
 
@@ -97,13 +109,13 @@ python -m unittest discover -s tests
 ```json
 {
   "team_code": "MOCK001",
-  "elapsed_ms": 12000,
+  "elapsed_ms": 12500,
   "load_grams": 7300,
   "event": "sample",
-  "timestamp": "2026-10-08T12:00:00+00:00"
+  "timestamp": "2026-10-19T12:00:00+00:00"
 }
 ```
 
 `event`: `started`, `sample` ou `completed`. Carga em gramas, com resolução de
-100 g. Erros 401, 404 e 422 são registrados sem nova tentativa; falhas de rede,
-5xx e 429 são repetidas.
+100 g; o `completed` leva o pico calculado pelo Arduino. Erros 401, 404 e 422
+são registrados sem nova tentativa; falhas de rede, 5xx e 429 são repetidas.

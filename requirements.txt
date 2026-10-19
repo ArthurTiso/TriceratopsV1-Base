@@ -1,8 +1,5 @@
-# Dependências multiplataforma (Windows, Linux e Raspberry Pi).
 streamlit>=1.41   # versão mínima necessária para st.html()
 plotly>=5.18
 streamlit-autorefresh>=1.0.1
-requests>=2.31    # usado pelo ApiSender (envio HTTP pro Módulo 3)
-pyserial>=3.5     # usado pelo SerialReceiver (Arduino receptor via USB)
-
-# requirements-pi.txt só é necessário para os scripts em legacy/.
+requests>=2.31    # envio HTTP para o Módulo 3
+pyserial>=3.5     # comunicação USB com o Arduino do Módulo 1

@@ -14,8 +14,7 @@ RAIZ_PROJETO = Path(__file__).resolve().parent.parent
 ARQUIVO_ENV = RAIZ_PROJETO / ".env"
 ARQUIVO_ESTADO = RAIZ_PROJETO / "data.json"
 
-RECEPTORES = ("simulador", "serial")
-FIRMWARES_SIMULADOS = ("atual", "corrigido")
+RECEPTORES = ("serial", "simulador")
 
 
 def carregar_env(caminho=ARQUIVO_ENV):
@@ -40,27 +39,27 @@ class Config:
     receptor: str
     porta_serial: str
     baud_serial: int
-    firmware_simulado: str
-    perda_rf_simulada: float
+    peso_minimo_colapso_kg: float
+    fracao_colapso: float
+    confirmacao_colapso_s: float
 
 
 def carregar_config() -> Config:
     carregar_env()
 
     config = Config(
-        team_code=os.getenv("SPINO_TEAM_CODE", "").strip(),
-        modulo3_url=os.getenv("SPINO_MODULO3_URL", "http://localhost:8000/api/v1/sensors/capture"),
+        team_code=os.getenv("SPINO_TEAM_CODE", "").strip().upper(),
+        modulo3_url=os.getenv("SPINO_MODULO3_URL", "http://127.0.0.1:8000/api/v1/sensors/capture"),
         modulo3_token=os.getenv("SPINO_MODULO3_TOKEN", ""),
         intervalo_envio_s=float(os.getenv("SPINO_SEND_INTERVAL_SECONDS", "1")),
-        receptor=os.getenv("SPINO_RECEIVER", "simulador").strip().lower(),
+        receptor=os.getenv("SPINO_RECEIVER", "serial").strip().lower(),
         porta_serial=os.getenv("SPINO_SERIAL_PORT", "").strip(),
-        baud_serial=int(os.getenv("SPINO_SERIAL_BAUD", "9600")),
-        firmware_simulado=os.getenv("SPINO_SIM_FIRMWARE", "atual").strip().lower(),
-        perda_rf_simulada=float(os.getenv("SPINO_SIM_PERDA_RF", "0")),
+        baud_serial=int(os.getenv("SPINO_SERIAL_BAUD", "115200")),
+        peso_minimo_colapso_kg=float(os.getenv("SPINO_COLAPSO_PESO_MINIMO_KG", "2.0")),
+        fracao_colapso=float(os.getenv("SPINO_COLAPSO_FRACAO", "0.20")),
+        confirmacao_colapso_s=float(os.getenv("SPINO_COLAPSO_CONFIRMACAO_S", "1.0")),
     )
 
-    if not config.team_code:
-        raise RuntimeError("Defina SPINO_TEAM_CODE antes de iniciar o Módulo 2")
     if len(config.team_code) > TAMANHO_MAXIMO_TEAM_CODE:
         raise RuntimeError(f"SPINO_TEAM_CODE tem mais de {TAMANHO_MAXIMO_TEAM_CODE} caracteres")
     if not config.modulo3_token:
@@ -68,8 +67,8 @@ def carregar_config() -> Config:
     if config.receptor not in RECEPTORES:
         raise RuntimeError(f"SPINO_RECEIVER deve ser um de {RECEPTORES}")
     if config.receptor == "serial" and not config.porta_serial:
-        raise RuntimeError("Defina SPINO_SERIAL_PORT (ex.: COM3 no Windows, /dev/ttyACM0 no Pi)")
-    if config.firmware_simulado not in FIRMWARES_SIMULADOS:
-        raise RuntimeError(f"SPINO_SIM_FIRMWARE deve ser um de {FIRMWARES_SIMULADOS}")
+        raise RuntimeError("Defina SPINO_SERIAL_PORT com a porta do Arduino (ex.: COM3)")
+    if not 0 < config.fracao_colapso < 1:
+        raise RuntimeError("SPINO_COLAPSO_FRACAO deve estar entre 0 e 1")
 
     return config

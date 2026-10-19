@@ -20,11 +20,14 @@ ARQUIVO_ESTADO = Path(__file__).resolve().parent.parent / "data.json"
 st_autorefresh(interval=1000, key="refresh")
 
 STATUS_META = {
-    "RUNNING":  {"label": "EM TESTE",   "css": "status-running"},
-    "BROKEN":   {"label": "ROMPEU",     "css": "status-broken"},
-    "INACTIVE": {"label": "INATIVO",    "css": "status-inactive"},
-    "IDLE":     {"label": "AGUARDANDO", "css": "status-idle"},
-    "SEM_DADOS": {"label": "AGUARDANDO DADOS DO MÓDULO 1", "css": "status-idle"},
+    "RUNNING":     {"label": "EM ENSAIO",            "css": "status-running"},
+    "TARANDO":     {"label": "TARANDO — SEM CARGA",  "css": "status-idle"},
+    "BROKEN":      {"label": "ROMPEU",               "css": "status-broken"},
+    "FINALIZADO":  {"label": "ENSAIO ENCERRADO",     "css": "status-broken"},
+    "INACTIVE":    {"label": "SEM DADOS DA BALANÇA", "css": "status-inactive"},
+    "ERRO_SENSOR": {"label": "ERRO NO SENSOR",       "css": "status-inactive"},
+    "IDLE":        {"label": "AGUARDANDO ENSAIO",    "css": "status-idle"},
+    "SEM_DADOS":   {"label": "MÓDULO 2 DESLIGADO",   "css": "status-idle"},
 }
 
 
@@ -37,11 +40,6 @@ def formatar_mmss(segundos):
         return "--:--"
     total = int(segundos)
     return f"{total // 60:02d}:{total % 60:02d}"
-
-
-def formatar_opcional(valor, sufixo):
-    # Bateria e deflexão ainda são enviadas como 0 pelo Módulo 1 (sem sensor).
-    return "—" if not valor else f"{valor}{sufixo}"
 
 
 def carregar_dados():
@@ -130,6 +128,7 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"], .stApp {
     font-weight: 600;
 }
 .spino-hero .valor {
+    color: var(--text);
     font-size: 5.2rem;
     font-weight: 700;
     line-height: 1.1;
@@ -152,9 +151,14 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"], .stApp {
     color: var(--text-dim);
     font-weight: 600;
 }
-.spino-crono .tempo { font-size: 2.1rem; font-weight: 600; margin: 4px 0 10px; }
+.spino-crono .tempo { color: var(--text); font-size: 2.1rem; font-weight: 600; margin: 4px 0 10px; }
 .crono-track { background: var(--surface-2); border-radius: 6px; height: 8px; overflow: hidden; }
 .crono-fill  { height: 100%; border-radius: 6px; transition: width 0.4s ease; }
+.spino-mensagem {
+    text-align: center;
+    color: var(--text-dim);
+    margin: -12px 0 20px;
+}
 .spino-chart-label {
     font-family: 'Oswald', sans-serif;
     font-size: 0.85rem;
@@ -171,8 +175,8 @@ data = carregar_dados()
 
 if not data:
     data = {
-        "bateria": 0, "peso_atual": 0, "peso_max": 0, "angulo": 0, "tempo": 0,
-        "status": "SEM_DADOS", "historico": [], "segundos_desde_mudanca": None,
+        "peso_atual": 0, "peso_max": 0, "tempo": 0, "status": "SEM_DADOS",
+        "historico": [], "segundos_desde_mudanca": None,
     }
 
 status = data.get("status", "UNKNOWN")
@@ -180,27 +184,24 @@ meta = status_meta(status)
 
 peso_atual = data.get("peso_atual", 0)
 peso_max = data.get("peso_max", 0)
-bateria = data.get("bateria", 0)
-angulo = data.get("angulo", 0)
 tempo = data.get("tempo", 0)
 segundos_desde_mudanca = data.get("segundos_desde_mudanca")
 equipe = data.get("equipe") or "—"
+mensagem = data.get("mensagem")
 
 # ---- barra superior ----
 st.html(
     '<div class="spino-topbar">'
     f'<span>EQUIPE <b>{equipe}</b></span>'
     '<span class="divider">│</span>'
-    f'<span>BATERIA <b>{formatar_opcional(bateria, "%")}</b></span>'
-    '<span class="divider">│</span>'
-    f'<span>DEFLEXÃO <b>{formatar_opcional(angulo, "")}</b></span>'
-    '<span class="divider">│</span>'
-    f'<span>DURAÇÃO <b>{tempo}s</b></span>'
+    f'<span>DURAÇÃO <b>{formatar_mmss(tempo)}</b></span>'
     '</div>'
 )
 
 # ---- faixa de status ----
 st.html(f'<div class="spino-band {meta["css"]}">{meta["label"]}</div>')
+if mensagem:
+    st.html(f'<div class="spino-mensagem">{mensagem}</div>')
 
 # ---- cronômetro ----
 if segundos_desde_mudanca is None:
@@ -228,7 +229,7 @@ st.html(
 
 # ---- cartão de peso (hero) + trinca se rompeu ----
 crack_svg = ""
-if status == "BROKEN":
+if status in ("BROKEN", "FINALIZADO"):
     crack_svg = (
         '<svg class="crack-overlay" viewBox="0 0 400 160" preserveAspectRatio="none">'
         '<polyline points="0,55 60,50 95,80 140,60 170,95 210,58 245,88 285,52 320,72 400,50" '
@@ -239,9 +240,9 @@ if status == "BROKEN":
 
 st.html(
     f'<div class="spino-hero">{crack_svg}'
-    '<div class="eyebrow">PESO ATUAL</div>'
+    '<div class="eyebrow">CARGA ATUAL</div>'
     f'<div class="valor">{peso_atual:.1f}<small> kg</small></div>'
-    f'<div class="registro">REGISTRO MÁXIMO — {peso_max:.1f} kg</div>'
+    f'<div class="registro">CARGA MÁXIMA — {peso_max:.1f} kg</div>'
     '</div>'
 )
 
@@ -260,7 +261,7 @@ if historico:
         mode="lines+markers",
         line=dict(color="#4C7A96", width=2.5),
         marker=dict(color="#F2C230", size=5),
-        hovertemplate="t=%{x}s · %{y:.1f} kg<extra></extra>",
+        hovertemplate="t=%{x:.1f}s · %{y:.1f} kg<extra></extra>",
     ))
     fig.update_layout(
         height=360,
@@ -272,6 +273,6 @@ if historico:
         yaxis=dict(title="peso (kg)", gridcolor="#2C3740", zeroline=False),
         showlegend=False,
     )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, config={"displayModeBar": False})
 else:
     st.html('<div style="color: #7C8894; text-align:center; padding: 30px 0;">ainda não há dados suficientes para o gráfico</div>')

@@ -5,10 +5,7 @@ from sender.modulo3_payload import build_capture_payload
 
 class Module3PayloadTest(unittest.TestCase):
     def test_converts_kg_and_seconds_to_the_module_3_contract(self):
-        payload = build_capture_payload(
-            "PONTE001",
-            {"peso_atual": 7.3, "tempo": 12},
-        )
+        payload = build_capture_payload("PONTE001", 12.0, 7.3)
 
         self.assertEqual(
             payload,
@@ -20,33 +17,28 @@ class Module3PayloadTest(unittest.TestCase):
             },
         )
 
-    def test_decoded_tenths_of_kg_become_exact_grams(self):
-        # 0123 no quadro = 12,3 kg; evita 12299 por erro de ponto flutuante
-        payload = build_capture_payload("PONTE001", {"peso_atual": 123 / 10, "tempo": 0})
+    def test_keeps_millisecond_resolution_of_the_elapsed_time(self):
+        payload = build_capture_payload("PONTE001", 2.5004, 12.3)
 
+        self.assertEqual(payload["elapsed_ms"], 2500)
         self.assertEqual(payload["load_grams"], 12300)
 
-    def test_marks_a_rupture_as_completed(self):
-        payload = build_capture_payload(
-            "PONTE001",
-            {"peso_atual": 8, "tempo": 15},
-            event="completed",
-        )
+    def test_never_sends_negative_values(self):
+        payload = build_capture_payload("PONTE001", -0.1, -0.2)
 
-        self.assertEqual(payload["event"], "completed")
+        self.assertEqual((payload["elapsed_ms"], payload["load_grams"]), (0, 0))
 
-    def test_accepts_the_started_event(self):
-        payload = build_capture_payload("PONTE001", {"peso_atual": 0, "tempo": 0}, event="started")
-
-        self.assertEqual(payload["event"], "started")
+    def test_accepts_the_module_3_events(self):
+        for evento in ("started", "sample", "completed"):
+            self.assertEqual(build_capture_payload("PONTE001", 0, 0, evento)["event"], evento)
 
     def test_rejects_unknown_events(self):
         with self.assertRaises(ValueError):
-            build_capture_payload("PONTE001", {"peso_atual": 0, "tempo": 0}, event="broken")
+            build_capture_payload("PONTE001", 0, 0, event="broken")
 
     def test_requires_a_team_code(self):
         with self.assertRaises(ValueError):
-            build_capture_payload("", {"peso_atual": 1, "tempo": 0})
+            build_capture_payload("", 0, 1)
 
 
 if __name__ == "__main__":

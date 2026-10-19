@@ -1,20 +1,18 @@
-"""Lê os quadros SPINO do Arduino receptor (RH_ASK -> USB serial).
+"""Comunicação com o Arduino do Módulo 1 pela USB serial.
 
-O receptor imprime cada quadro válido em uma linha. Qualquer outra linha
-(mensagem de inicialização, ruído) é ignorada.
+Ao abrir a porta, o Arduino reinicia e faz a tara automática de inicialização:
+a balança deve estar sem carga quando o Módulo 2 conectar.
 """
 
-import re
 import time
 
 from receiver.base_receiver import BaseReceiver
 
-PADRAO_QUADRO = re.compile(r"\*\*\*\d{21}###")
 ESPERA_RECONEXAO_SEGUNDOS = 2.0
 
 
 class SerialReceiver(BaseReceiver):
-    def __init__(self, porta, baud=9600, timeout=0.2, abrir_serial=None, clock=time.monotonic):
+    def __init__(self, porta, baud=115200, timeout=0.2, abrir_serial=None, clock=time.monotonic):
         self.porta = porta
         self.baud = baud
         self.timeout = timeout
@@ -37,8 +35,21 @@ class SerialReceiver(BaseReceiver):
 
         if not linha:
             return None
-        encontrado = PADRAO_QUADRO.search(linha.decode("ascii", errors="ignore"))
-        return encontrado.group(0) if encontrado else None
+        texto = linha.decode("utf-8", errors="ignore").strip()
+        return texto or None
+
+    def enviar_comando(self, comando: str):
+        if self._serial is None:
+            print(f"⚠️  Comando '{comando}' não enviado: Arduino desconectado")
+            return False
+        try:
+            self._serial.write(comando.encode("ascii"))
+            self._serial.flush()
+            return True
+        except Exception as e:
+            print(f"⚠️  Erro ao enviar '{comando}' pela serial: {e}")
+            self.cleanup()
+            return False
 
     def cleanup(self):
         if self._serial is not None:
@@ -59,7 +70,7 @@ class SerialReceiver(BaseReceiver):
         self._ultima_tentativa = agora
         try:
             self._serial = self._abrir_serial(self.porta, self.baud, self.timeout)
-            print(f"🔌 Receptor serial conectado em {self.porta} ({self.baud} baud)")
+            print(f"🔌 Arduino conectado em {self.porta} ({self.baud} baud)")
             return True
         except Exception as e:
             print(f"⚠️  Não foi possível abrir {self.porta}: {e}")

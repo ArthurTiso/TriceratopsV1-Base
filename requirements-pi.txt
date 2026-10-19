@@ -1,6 +1,0 @@
-# Dependências usadas só pelos scripts de RF direto no GPIO em legacy/rpi_rf/
-# (fora de uso). O Módulo 2 não precisa delas: no Pi basta
-#   pip install -r requirements.txt
-
-rpi_rf
-RPi.GPIO
