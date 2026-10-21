@@ -17,8 +17,7 @@ STATUS_TEMPORARIOS = {408, 429}
 
 MENSAGENS_ERRO = {
     401: "token recusado — confira SPINO_MODULO3_TOKEN e SENSORS_API_TOKEN do Módulo 3",
-    404: "equipe não encontrada — confira SPINO_TEAM_CODE",
-    422: "dados recusados (equipe não aprovada para ensaio ou payload inválido)",
+    404: "endereço não encontrado — confira SPINO_MODULO3_URL",
 }
 
 _FIM = object()  # sentinela para encerrar a thread
@@ -90,7 +89,7 @@ class ApiSender:
                         print(f"📤 Módulo 3 confirmou '{evento}' ({resposta.status_code})")
                     return
                 if resposta.status_code < 500 and resposta.status_code not in STATUS_TEMPORARIOS:
-                    motivo = MENSAGENS_ERRO.get(resposta.status_code, resposta.text[:200])
+                    motivo = MENSAGENS_ERRO.get(resposta.status_code) or _mensagem(resposta)
                     print(f"❌ Módulo 3 recusou '{evento}' ({resposta.status_code}): {motivo}")
                     return
                 print(
@@ -106,3 +105,16 @@ class ApiSender:
                 time.sleep(ESPERA_ENTRE_TENTATIVAS)
 
         print(f"❌ Desisti de enviar '{evento}' pro Módulo 3 após esgotar as tentativas")
+
+
+def _mensagem(resposta):
+    """Texto de erro do Laravel (ex.: 422 "O ensaio não está aceitando novas leituras")."""
+    try:
+        corpo = resposta.json()
+    except Exception:
+        return resposta.text[:200]
+    if not isinstance(corpo, dict):
+        return resposta.text[:200]
+    erros = corpo.get("errors") or {}
+    detalhes = [msg for mensagens in erros.values() for msg in mensagens]
+    return "; ".join(detalhes) or corpo.get("message") or resposta.text[:200]
