@@ -5,7 +5,7 @@ import threading
 
 AJUDA = """
 Comandos (digite e tecle Enter):
-  novo            tara a balança SEM CARGA e inicia o ensaio armado no Módulo 3
+  novo [EQUIPE]   tara a balança SEM CARGA e inicia o ensaio (ex.: novo MOCK002)
   fim             encerra o ensaio atual como concluído
   cancelar        descarta o ensaio atual sem registrar resultado
   tara            zera a balança fora de ensaio

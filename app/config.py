@@ -8,7 +8,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from sender.modulo3_payload import url_base
+from sender.modulo3_payload import TAMANHO_MAXIMO_TEAM_CODE
 
 RAIZ_PROJETO = Path(__file__).resolve().parent.parent
 ARQUIVO_ENV = RAIZ_PROJETO / ".env"
@@ -32,7 +32,7 @@ def carregar_env(caminho=ARQUIVO_ENV):
 
 @dataclass(frozen=True)
 class Config:
-    device_code: str
+    team_code: str
     modulo3_url: str
     modulo3_token: str
     intervalo_envio_s: float
@@ -48,8 +48,8 @@ def carregar_config() -> Config:
     carregar_env()
 
     config = Config(
-        device_code=os.getenv("SPINO_DEVICE_CODE", "M2-01").strip().upper(),
-        modulo3_url=url_base(os.getenv("SPINO_MODULO3_URL", "http://127.0.0.1:8000")),
+        team_code=os.getenv("SPINO_TEAM_CODE", "").strip().upper(),
+        modulo3_url=os.getenv("SPINO_MODULO3_URL", "http://127.0.0.1:8000/api/v1/sensors/capture"),
         modulo3_token=os.getenv("SPINO_MODULO3_TOKEN", ""),
         intervalo_envio_s=float(os.getenv("SPINO_SEND_INTERVAL_SECONDS", "1")),
         receptor=os.getenv("SPINO_RECEIVER", "serial").strip().lower(),
@@ -60,8 +60,8 @@ def carregar_config() -> Config:
         confirmacao_colapso_s=float(os.getenv("SPINO_COLAPSO_CONFIRMACAO_S", "1.0")),
     )
 
-    if not config.device_code or len(config.device_code) > 32:
-        raise RuntimeError("SPINO_DEVICE_CODE deve ter de 1 a 32 caracteres (ex.: M2-01)")
+    if len(config.team_code) > TAMANHO_MAXIMO_TEAM_CODE:
+        raise RuntimeError(f"SPINO_TEAM_CODE tem mais de {TAMANHO_MAXIMO_TEAM_CODE} caracteres")
     if not config.modulo3_token:
         print("⚠️  SPINO_MODULO3_TOKEN vazio — o Módulo 3 vai recusar os envios (401)")
     if config.receptor not in RECEPTORES:
