@@ -1,9 +1,8 @@
 """Integração Módulo 1 (simulado) -> Módulo 2 -> Módulo 3 (mock HTTP real).
 
-O simulador reproduz o firmware da balança com um relógio acelerado; os
-comandos do operador passam pelo mesmo caminho do terminal e os envios vão
-por HTTP de verdade até o mock, que aplica as regras do SensorCaptureController
-do Módulo 3.
+O simulador reproduz o firmware da balança com um relógio acelerado; o mock
+aplica as regras de ensaio armado do Módulo 3. Consulta do ensaio ativo,
+comandos do operador e envios passam pelos mesmos caminhos do programa real.
 """
 
 import random
@@ -16,16 +15,17 @@ from apoio import RelogioFalso
 from app.pipeline import Pipeline
 from receiver.simulated_receiver import SimulatedReceiver
 from sender.api_sender import ApiSender
-from sender.mock_modulo3_server import ROTA, criar_servidor
+from sender.ensaio_ativo import ConsultaEnsaioAtivo
+from sender.mock_modulo3_server import criar_servidor
+from sender.modulo3_payload import url_captura, url_ensaio_ativo
 
 TOKEN = "token-de-teste"
+DEVICE = "M2-01"
 
 
 class IntegracaoModulo3Test(unittest.TestCase):
     def setUp(self):
-        self.servidor, self.banco = criar_servidor(0, TOKEN, verbose=False)
-        threading.Thread(target=self.servidor.serve_forever, daemon=True).start()
-        self.url = f"http://127.0.0.1:{self.servidor.server_address[1]}{ROTA}"
+        self.subir_mock(token=None)  # o Módulo 3 atual não exige token
         self.relogio = RelogioFalso()
         self.receiver = SimulatedReceiver(clock=self.relogio, rng=random.Random(11))
 
@@ -34,91 +34,138 @@ class IntegracaoModulo3Test(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def tearDown(self):
+        self.derrubar_mock()
+
+    def subir_mock(self, token):
+        self.servidor, self.banco = criar_servidor(0, token, device_padrao=DEVICE, verbose=False)
+        threading.Thread(target=self.servidor.serve_forever, daemon=True).start()
+        self.base = f"http://127.0.0.1:{self.servidor.server_address[1]}"
+
+    def derrubar_mock(self):
         self.servidor.shutdown()
         self.servidor.server_close()
 
-    def criar_pipeline(self, token=TOKEN):
-        self.sender = ApiSender(self.url, token)
-        return Pipeline("MOCK001", self.receiver, self.sender, clock=self.relogio)
+    def criar_pipeline(self, token=None):
+        self.sender = ApiSender(url_captura(self.base), token)
+        self.consulta = ConsultaEnsaioAtivo(url_ensaio_ativo(self.base, DEVICE), token, iniciar=False)
+        return Pipeline(DEVICE, self.receiver, self.sender, consulta=self.consulta, clock=self.relogio)
 
     def rodar(self, pipeline, segundos, passo=0.05):
-        for _ in range(int(segundos / passo)):
+        for passo_n in range(int(segundos / passo)):
+            if passo_n % 40 == 0:  # consulta do ensaio ativo a cada 2 s
+                self.consulta.consultar()
             linha = self.receiver.receber()
             while linha:
-                if pipeline.processar_linha(linha):
-                    while not self.sender._fila.empty():  # mock no ritmo do relógio acelerado
-                        time.sleep(0.001)
+                pipeline.processar_linha(linha)
                 linha = self.receiver.receber()
             pipeline.verificar()
+            while not self.sender._fila.empty():  # mock no ritmo do relógio acelerado
+                time.sleep(0.001)
             self.relogio.avancar(passo)
 
-    def eventos(self, equipe):
-        return [(e, ms, g) for codigo, e, ms, g in self.banco.eventos if codigo == equipe]
+    def eventos(self, equipe=None):
+        return [e for e in self.banco.eventos if equipe is None or e[0] == equipe]
 
-    def test_operator_runs_two_tests_until_rupture(self):
+    def test_new_test_requires_a_run_armed_in_module_3(self):
         pipeline = self.criar_pipeline()
-        self.rodar(pipeline, 3)  # tara de inicialização
+        self.rodar(pipeline, 3)
+
+        pipeline.executar_comando("novo")
+        self.rodar(pipeline, 20)
+        self.sender.parar(timeout=10)
+
+        self.assertFalse(pipeline.controle.em_ensaio)
+        self.assertEqual(self.eventos(), [])
+
+    def test_two_armed_tests_until_rupture(self):
+        pipeline = self.criar_pipeline()
+        self.rodar(pipeline, 3)
 
         picos = {}
         for equipe in ("MOCK002", "MOCK003"):
-            pipeline.executar_comando(f"novo {equipe}")
+            run_id = self.banco.armar(equipe, DEVICE)
+            self.rodar(pipeline, 3)  # M2 descobre o ensaio armado
+            self.assertEqual(pipeline.armado.run_id, run_id)
+            pipeline.executar_comando("novo")
             self.rodar(pipeline, 60)
-            picos[equipe] = pipeline.state.peso_max
+            picos[equipe] = (run_id, pipeline.state.peso_max)
         self.sender.parar(timeout=10)
 
-        for equipe, pico in picos.items():
+        for equipe, (run_id, pico) in picos.items():
             with self.subTest(equipe=equipe):
                 eventos = self.eventos(equipe)
-                nomes = [e for e, _, _ in eventos]
+                nomes = [e[1] for e in eventos]
                 self.assertEqual(nomes[0], "started")
                 self.assertGreater(nomes.count("sample"), 5)
                 self.assertEqual(nomes.count("completed"), 1)
                 self.assertEqual(nomes[-1], "completed")
-                # tempo do ensaio crescente, em ms
-                tempos = [ms for _, ms, _ in eventos]
-                self.assertEqual(tempos, sorted(tempos))
-                # ruptura registrada com o pico calculado pelo Arduino
-                self.assertEqual(eventos[-1][2], round(pico * 1000))
-                self.assertEqual(self.banco.equipes[equipe]["test_status"], "completed")
+                self.assertEqual({e[4] for e in eventos}, {run_id})
+                self.assertEqual(eventos[-1][3], round(pico * 1000))
+                self.assertEqual(self.banco.ensaios[run_id]["status"], "finished")
                 self.assertEqual(self.banco.equipes[equipe]["actual_load_grams"], round(pico * 1000))
 
-        self.assertEqual(self.eventos("MOCK001"), [])  # equipe padrão não foi usada
-
-    def test_manual_finish_sends_completed(self):
+    def test_typed_team_must_match_the_armed_run(self):
         pipeline = self.criar_pipeline()
         self.rodar(pipeline, 3)
-        pipeline.executar_comando("novo")
-        self.rodar(pipeline, 8)  # carga ainda subindo
+        self.banco.armar("MOCK002", DEVICE)
+        self.rodar(pipeline, 3)
 
-        pipeline.executar_comando("fim")
+        pipeline.executar_comando("novo MOCK003")
         self.rodar(pipeline, 5)
-        self.sender.parar(timeout=10)
 
-        nomes = [e for e, _, _ in self.eventos("MOCK001")]
-        self.assertEqual(nomes[0], "started")
-        self.assertEqual(nomes[-1], "completed")
-        self.assertEqual(nomes.count("completed"), 1)
+        self.assertFalse(pipeline.controle.em_ensaio)
 
-    def test_cancel_sends_nothing_more(self):
+    def test_cancel_in_module_3_stops_the_test(self):
         pipeline = self.criar_pipeline()
         self.rodar(pipeline, 3)
+        self.banco.armar("MOCK002", DEVICE)
+        self.rodar(pipeline, 3)
         pipeline.executar_comando("novo")
-        self.rodar(pipeline, 5)
+        self.rodar(pipeline, 6)
+        self.assertTrue(pipeline.controle.em_ensaio)
 
-        pipeline.executar_comando("cancelar")
+        self.banco.cancelar_ativos()
         self.rodar(pipeline, 60)
         self.sender.parar(timeout=10)
 
-        self.assertNotIn("completed", [e for e, _, _ in self.eventos("MOCK001")])
+        self.assertFalse(pipeline.controle.em_ensaio)
+        self.assertNotIn("completed", [e[1] for e in self.eventos()])
 
-    def test_wrong_token_is_rejected(self):
-        pipeline = self.criar_pipeline(token="errado")
+    def test_resuming_the_same_run_after_an_arduino_reset(self):
+        pipeline = self.criar_pipeline()
         self.rodar(pipeline, 3)
+        run_id = self.banco.armar("MOCK002", DEVICE)
+        self.rodar(pipeline, 3)
+
+        with mock.patch("app.pipeline.base_sequencia", side_effect=[1000, 5000]):
+            pipeline.executar_comando("novo")
+            self.rodar(pipeline, 8)
+            self.receiver.enviar_comando("t")  # Arduino reiniciou: tara inesperada
+            self.rodar(pipeline, 3)
+            self.assertFalse(pipeline.controle.em_ensaio)
+
+            pipeline.executar_comando("novo")  # mesmo ensaio armado, ainda "running"
+            self.rodar(pipeline, 60)
+        self.sender.parar(timeout=10)
+
+        nomes = [e[1] for e in self.eventos("MOCK002")]
+        self.assertEqual(nomes.count("started"), 2)
+        self.assertEqual(nomes.count("completed"), 1)
+        self.assertEqual(self.banco.ensaios[run_id]["status"], "finished")
+
+    def test_wrong_token_sends_nothing_when_module_3_requires_one(self):
+        self.derrubar_mock()
+        self.subir_mock(token=TOKEN)
+        pipeline = self.criar_pipeline(token="errado")
+        self.banco.armar("MOCK002", DEVICE)
+        self.rodar(pipeline, 3)
+
         pipeline.executar_comando("novo")
         self.rodar(pipeline, 10)
         self.sender.parar(timeout=10)
 
-        self.assertEqual(self.banco.eventos, [])
+        self.assertIsNone(pipeline.armado)
+        self.assertEqual(self.eventos(), [])
 
 
 if __name__ == "__main__":

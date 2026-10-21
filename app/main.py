@@ -1,9 +1,14 @@
+import os
+import sys
 import time
+import traceback
 
 from app.config import ARQUIVO_ESTADO, carregar_config
 from app.console import AJUDA, Console
 from app.pipeline import Pipeline
 from sender.api_sender import ApiSender
+from sender.ensaio_ativo import ConsultaEnsaioAtivo
+from sender.modulo3_payload import url_captura, url_ensaio_ativo
 
 # python -m app.main
 # Configuração: arquivo .env na raiz do projeto (veja .env.example)
@@ -24,15 +29,20 @@ def criar_receiver(config):
 def main():
     receiver = None
     sender = None
+    consulta = None
 
     try:
         config = carregar_config()
         receiver = criar_receiver(config)
-        sender = ApiSender(config.modulo3_url, config.modulo3_token)
+        sender = ApiSender(url_captura(config.modulo3_url), config.modulo3_token)
+        consulta = ConsultaEnsaioAtivo(
+            url_ensaio_ativo(config.modulo3_url, config.device_code), config.modulo3_token
+        )
         pipeline = Pipeline(
-            config.team_code,
+            config.device_code,
             receiver,
             sender,
+            consulta=consulta,
             arquivo_estado=ARQUIVO_ESTADO,
             intervalo_envio_s=config.intervalo_envio_s,
             peso_minimo_colapso_kg=config.peso_minimo_colapso_kg,
@@ -41,9 +51,8 @@ def main():
         )
         console = Console()
 
-        print(f"Módulo 3: {config.modulo3_url}")
-        if config.team_code:
-            print(f"Equipe padrão: {config.team_code}")
+        print(f"Módulo 3: {config.modulo3_url} | este M2: {config.device_code}")
+        print("Arme o ensaio no Módulo 3 (Administração → Ensaios) para este M2.")
         print(AJUDA)
 
         while True:
@@ -67,9 +76,23 @@ def main():
         if receiver and hasattr(receiver, "cleanup"):
             receiver.cleanup()
 
+        if consulta:
+            consulta.parar()
         if sender:
             sender.parar()
 
 
 if __name__ == "__main__":
-    main()
+    codigo_saida = 0
+    try:
+        main()
+    except Exception:
+        traceback.print_exc()
+        codigo_saida = 1
+    finally:
+        # A thread do teclado continua bloqueada em input(); encerrar sem a
+        # finalização do interpretador evita o "Fatal Python error" ao sair.
+        # Fila do Módulo 3 e data.json já foram concluídos em main().
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(codigo_saida)
