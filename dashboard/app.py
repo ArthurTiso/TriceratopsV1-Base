@@ -51,7 +51,7 @@ TEMAS_RUPTURA = {
     "E": {"bg": "#2C0E13", "surface": "#3A141A", "border": "#5C232B",
           "faixa": "#C23440", "faixa_texto": "#FFFFFF", "destaque": "#DA505B"},
 }
-TEMA_RUPTURA = "A"
+TEMA_RUPTURA = "C"
 
 # Faixa de status: (texto, classe CSS)
 STATUS = {
