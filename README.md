@@ -43,17 +43,32 @@ a tara de inicialização — a balança deve estar sem carga.
 
 A comissão arma cada ensaio no Módulo 3 (Administração → Ensaios), escolhendo a
 equipe e este M2 (`SPINO_DEVICE_CODE`, ex.: `M2-01`). O Módulo 2 consulta o
-ensaio armado a cada 2 s e o anuncia no terminal; o operador confirma com `novo`.
+Módulo 3 a cada 2 s. O ensaio pode ser iniciado de três formas — todas fazem a
+tara (ponte montada, sem carga) e começam a medir:
+
+* **Iniciar no Módulo 3**: o M2 percebe o ensaio passar de armado para em
+  andamento e começa sozinho;
+* **Iniciar ensaio no painel** (Controle manual) ou `novo` no terminal;
+* **Modo local**, sem ensaio armado ou com o Módulo 3 fora do ar: informar a
+  equipe no painel ou `novo EQUIPE` — nada é enviado ao Módulo 3.
 
 | Etapa | Como acontece | Envio ao Módulo 3 |
 |---|---|---|
-| Início | ensaio armado no Módulo 3 → operador digita `novo` → tara → cronômetro começa no fim da tara | `started` |
+| Início | uma das formas acima → tara → cronômetro começa no fim da tara | `started` |
 | Em andamento | carga = \|MEDIA_KG\|, pico = PICO_ABS_KG | `sample` a cada 1 s e a cada novo pico |
-| Colapso | pico ≥ 2 kg e carga ≤ 20% do pico por ≥ 1 s | `completed` com o pico, uma única vez |
-| Encerramento manual | operador digita `fim` | `completed` com o pico |
-| Cancelamento | `cancelar` no Módulo 2 ou ensaio cancelado/encerrado no Módulo 3 | nenhum |
+| Ruptura | pico ≥ 2 kg e carga ≤ 20% do pico por ≥ 1 s | `completed` com o pico, uma única vez |
+| Encerramento manual | Encerrar no painel ou `fim` | `completed` com o pico |
+| Encerrar/Cancelar no Módulo 3 | o M2 para; o pico fica em `resultados.csv` para lançar em Rupturas | nenhum |
+| Cancelar no Módulo 2 | painel ou `cancelar` | nenhum |
 | Tara inesperada (Arduino reiniciado) | ensaio interrompido | nenhum |
 | Sem linhas por 5 s / erro no HX711 | status `INACTIVE` / `ERRO_SENSOR` no painel | pausado |
+
+Um ensaio que já estava em andamento quando o Módulo 2 é aberto nunca é tarado
+automaticamente (a ponte pode estar carregada): use Iniciar ensaio no painel.
+
+Todo resultado é gravado em `resultados.csv` (separador `;`, abre no Excel),
+com a situação do registro no Módulo 3: `confirmado`, não registrado (com o
+motivo) ou modo local.
 
 ## Instalação
 
@@ -81,21 +96,25 @@ terminal têm prioridade sobre o arquivo.
 
 ## Execução
 
+No Windows, `iniciar_spino.bat` (dois cliques) abre o Módulo 2 e o painel.
+Manualmente:
+
 ```bash
-python -m app.main                       # Módulo 2 (console do operador)
-streamlit run dashboard/app.py           # interface local
-python -m sender.mock_modulo3_server     # opcional: Módulo 3 simulado (porta 8000, MOCK001 já armado)
+python -m app.main                       # Módulo 2
+streamlit run dashboard/app.py           # painel (http://localhost:8501)
+python -m sender.mock_modulo3_server     # opcional: Módulo 3 simulado (porta 8000)
 ```
 
-Comandos no terminal do Módulo 2:
+O painel mostra o status, o gráfico da carga máxima, a carga máxima, os
+eventos e as luzes da balança e do Módulo 3. A seção **Controle manual (M2)**
+fica recolhida e abre sozinha quando o Módulo 3 não responde:
 
-| Comando | Ação |
-|---|---|
-| `novo` | tara a balança sem carga e inicia o ensaio armado no Módulo 3 |
-| `fim` | encerra o ensaio atual como concluído |
-| `cancelar` | descarta o ensaio atual |
-| `tara` | zera a balança fora de ensaio |
-| `ajuda` / `sair` | lista os comandos / encerra |
+| Botão | Terminal | Ação |
+|---|---|---|
+| Iniciar ensaio | `novo` / `novo EQUIPE` | tara e inicia o ensaio armado (ou em modo local) |
+| Encerrar | `fim` | encerra e registra a carga máxima |
+| Cancelar | `cancelar` | descarta o ensaio, com confirmação |
+| Tarar | `tara` | zera a balança fora de ensaio |
 
 O Monitor Serial da IDE do Arduino deve estar fechado: a porta USB só pode
 ser usada por um programa por vez.

@@ -5,11 +5,15 @@ aplica as regras de ensaio armado do Módulo 3. Consulta do ensaio ativo,
 comandos do operador e envios passam pelos mesmos caminhos do programa real.
 """
 
+import csv
 import random
+import tempfile
 import threading
 import time
 import unittest
 from unittest import mock
+
+from pathlib import Path
 
 from apoio import RelogioFalso
 from app.pipeline import Pipeline
@@ -47,8 +51,18 @@ class IntegracaoModulo3Test(unittest.TestCase):
 
     def criar_pipeline(self, token=None):
         self.sender = ApiSender(url_captura(self.base), token)
-        self.consulta = ConsultaEnsaioAtivo(url_ensaio_ativo(self.base, DEVICE), token, iniciar=False)
-        return Pipeline(DEVICE, self.receiver, self.sender, consulta=self.consulta, clock=self.relogio)
+        self.consulta = ConsultaEnsaioAtivo(
+            url_ensaio_ativo(self.base, DEVICE), token, iniciar=False, clock=self.relogio
+        )
+        self.csv = Path(tempfile.mkdtemp()) / "resultados.csv"
+        return Pipeline(DEVICE, self.receiver, self.sender, consulta=self.consulta,
+                        arquivo_resultados=self.csv, clock=self.relogio)
+
+    def resultados_csv(self):
+        if not self.csv.exists():
+            return []
+        with open(self.csv, encoding="utf-8-sig", newline="") as f:
+            return list(csv.DictReader(f, delimiter=";"))
 
     def rodar(self, pipeline, segundos, passo=0.05):
         for passo_n in range(int(segundos / passo)):
@@ -166,6 +180,61 @@ class IntegracaoModulo3Test(unittest.TestCase):
 
         self.assertIsNone(pipeline.armado)
         self.assertEqual(self.eventos(), [])
+
+    def test_iniciar_button_in_module_3_runs_the_whole_test(self):
+        pipeline = self.criar_pipeline()
+        self.rodar(pipeline, 3)
+        run_id = self.banco.armar("MOCK002", DEVICE)
+        self.rodar(pipeline, 3)
+
+        self.banco.iniciar_armados()  # só o botão "Iniciar" do Módulo 3, sem "novo"
+        self.rodar(pipeline, 60)
+        self.sender.parar(timeout=10)
+        pipeline.finalizar()
+
+        nomes = [e[1] for e in self.eventos("MOCK002")]
+        self.assertEqual(nomes[0], "started")
+        self.assertEqual(nomes[-1], "completed")
+        self.assertEqual(self.banco.ensaios[run_id]["status"], "finished")
+        linha = self.resultados_csv()[0]
+        self.assertEqual(linha["registro_modulo3"], "confirmado")
+        self.assertEqual(linha["carga_ruptura_kg"].replace(",", "."),
+                         f"{self.banco.equipes['MOCK002']['actual_load_grams'] / 1000:.1f}")
+
+    def test_encerrar_in_module_3_mid_test_keeps_the_peak_in_the_csv(self):
+        pipeline = self.criar_pipeline()
+        self.rodar(pipeline, 3)
+        self.banco.armar("MOCK002", DEVICE)
+        self.rodar(pipeline, 3)
+        self.banco.iniciar_armados()
+        self.rodar(pipeline, 10)
+
+        self.banco.encerrar_ativos()
+        self.rodar(pipeline, 5)
+        self.sender.parar(timeout=10)
+
+        self.assertNotIn("completed", [e[1] for e in self.eventos()])
+        linha = self.resultados_csv()[0]
+        self.assertIn("em Rupturas", linha["registro_modulo3"])
+        self.assertGreater(float(linha["carga_ruptura_kg"].replace(",", ".")), 0)
+
+    def test_module_3_down_allows_a_local_test(self):
+        pipeline = self.criar_pipeline()
+        self.rodar(pipeline, 3)
+        self.banco.armar("MOCK002", DEVICE)
+        self.rodar(pipeline, 3)
+
+        self.derrubar_mock()
+        self.rodar(pipeline, 20)  # 15 s sem resposta: Módulo 3 fora do ar
+        self.assertFalse(pipeline.state.extras["m3_online"])
+        pipeline.executar_comando("novo EQUIPE 07")
+        self.rodar(pipeline, 60)
+        self.sender.parar(timeout=5)
+
+        linha = self.resultados_csv()[0]
+        self.assertEqual(linha["equipe_nome"], "EQUIPE 07")
+        self.assertEqual(linha["modo"], "local")
+        self.subir_mock(token=None)  # para o tearDown
 
 
 if __name__ == "__main__":

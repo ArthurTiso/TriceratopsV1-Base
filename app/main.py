@@ -3,7 +3,8 @@ import sys
 import time
 import traceback
 
-from app.config import ARQUIVO_ESTADO, carregar_config
+from app.comandos import FilaComandos
+from app.config import ARQUIVO_ESTADO, ARQUIVO_RESULTADOS, PASTA_COMANDOS, carregar_config
 from app.console import AJUDA, Console
 from app.pipeline import Pipeline
 from sender.api_sender import ApiSender
@@ -30,6 +31,7 @@ def main():
     receiver = None
     sender = None
     consulta = None
+    pipeline = None
 
     try:
         config = carregar_config()
@@ -44,20 +46,30 @@ def main():
             sender,
             consulta=consulta,
             arquivo_estado=ARQUIVO_ESTADO,
+            arquivo_resultados=ARQUIVO_RESULTADOS,
             intervalo_envio_s=config.intervalo_envio_s,
             peso_minimo_colapso_kg=config.peso_minimo_colapso_kg,
             fracao_colapso=config.fracao_colapso,
             confirmacao_colapso_s=config.confirmacao_colapso_s,
         )
         console = Console()
+        painel = FilaComandos(PASTA_COMANDOS)
+        proxima_leitura_painel = 0.0
 
         print(f"Módulo 3: {config.modulo3_url} | este M2: {config.device_code}")
         print("Arme o ensaio no Módulo 3 (Administração → Ensaios) para este M2.")
+        print("Os comandos também ficam no painel (streamlit run dashboard/app.py).")
         print(AJUDA)
 
         while True:
+            comandos = []
             comando = console.proximo()
-            if comando is not None and not pipeline.executar_comando(comando):
+            if comando is not None:
+                comandos.append(comando)
+            if time.monotonic() >= proxima_leitura_painel:
+                proxima_leitura_painel = time.monotonic() + 0.2
+                comandos.extend(painel.proximos())
+            if not all(pipeline.executar_comando(c) for c in comandos):
                 break
 
             linha = receiver.receber()
@@ -80,6 +92,8 @@ def main():
             consulta.parar()
         if sender:
             sender.parar()
+        if pipeline:
+            pipeline.finalizar()
 
 
 if __name__ == "__main__":

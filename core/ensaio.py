@@ -101,6 +101,11 @@ class ControleEnsaio:
         self._encerrar(IDLE)
         return True
 
+    @property
+    def aguardando_tara(self) -> bool:
+        """Ensaio pedido, esperando o Arduino concluir a tara."""
+        return self._equipe_pendente is not None
+
     def tempo_ensaio(self) -> float:
         return 0.0 if self._inicio is None else self._clock() - self._inicio
 
@@ -191,6 +196,7 @@ class ControleEnsaio:
 
         self.state.registrar_ponto(agora - self._inicio)
         if self._colapsou(medida, agora):
+            self.state.tempo_ruptura = self._colapso_desde - self._inicio
             self._encerrar(BROKEN)
             return [COLAPSO]
         return []

@@ -12,6 +12,8 @@ regras de ActiveTestRunController e SensorCaptureController (spino-web):
 
 Para simular a comissão (Administração → Ensaios), abra no navegador:
     http://127.0.0.1:8000/mock/armar/MOCK002     arma um ensaio para o M2
+    http://127.0.0.1:8000/mock/iniciar           botão "Iniciar" (armado → em andamento)
+    http://127.0.0.1:8000/mock/encerrar          botão "Encerrar" (fecha sem carga)
     http://127.0.0.1:8000/mock/cancelar          cancela o ensaio ativo
 
 Rodar a partir da raiz do projeto:
@@ -67,10 +69,23 @@ class BancoMock:
             return run_id
 
     def cancelar_ativos(self):
+        self._mudar_ativos(("armed", "running"), "cancelled")
+
+    def iniciar_armados(self):
+        """Botão "Iniciar" do admin: o ensaio armado passa a "em andamento"."""
+        self._mudar_ativos(("armed",), "running")
+
+    def encerrar_ativos(self):
+        """Botão "Encerrar" do admin: fecha o ensaio sem registrar carga."""
+        self._mudar_ativos(("armed", "running"), "finished")
+
+    def _mudar_ativos(self, de, para):
         with self.lock:
             for ensaio in self.ensaios.values():
-                if ensaio["status"] in ("armed", "running"):
-                    ensaio["status"] = "cancelled"
+                if ensaio["status"] in de:
+                    ensaio["status"] = para
+                    if para == "running":
+                        self.equipes[ensaio["equipe"]]["test_status"] = "running"
 
     def ensaio_ativo(self, device):
         for run_id, ensaio in reversed(list(self.ensaios.items())):
@@ -122,10 +137,16 @@ def criar_handler(banco, token, device_padrao="M2-01", verbose=True):
                     return self._responder(422, {"message": str(e)})
                 log(f"[MOCK MÓDULO 3] ensaio armado: {equipe} no {device_padrao} ({run_id})")
                 return self._responder(200, {"armed": True, "team": equipe, "run_id": run_id})
-            if self.path == "/mock/cancelar":
-                banco.cancelar_ativos()
-                log("[MOCK MÓDULO 3] ensaios ativos cancelados")
-                return self._responder(200, {"cancelled": True})
+            acoes = {
+                "/mock/cancelar": (banco.cancelar_ativos, "ensaios ativos cancelados"),
+                "/mock/iniciar": (banco.iniciar_armados, "ensaio armado iniciado (botão Iniciar)"),
+                "/mock/encerrar": (banco.encerrar_ativos, "ensaio encerrado sem carga (botão Encerrar)"),
+            }
+            if self.path in acoes:
+                acao, texto = acoes[self.path]
+                acao()
+                log(f"[MOCK MÓDULO 3] {texto}")
+                return self._responder(200, {"ok": True})
 
             encontrado = ROTA_ENSAIO_ATIVO.match(self.path)
             if not encontrado:
@@ -237,7 +258,8 @@ if __name__ == "__main__":
     servidor, banco = criar_servidor(porta, token, device_padrao=device)
     banco.armar("MOCK001", device)
     print(f"🧪 Mock do Módulo 3 em http://127.0.0.1:{porta} — ensaio da MOCK001 já armado no {device}")
-    print(f"   Armar outro: http://127.0.0.1:{porta}/mock/armar/MOCK002  |  cancelar: http://127.0.0.1:{porta}/mock/cancelar")
+    base = f"http://127.0.0.1:{porta}/mock"
+    print(f"   Admin simulado: {base}/armar/MOCK002 | {base}/iniciar | {base}/encerrar | {base}/cancelar")
     try:
         servidor.serve_forever()
     except KeyboardInterrupt:

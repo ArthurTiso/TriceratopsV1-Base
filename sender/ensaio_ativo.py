@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import requests
 
 INTERVALO_CONSULTA_S = 2.0  # a rota aceita 60 consultas por minuto
+OFFLINE_APOS_S = 15.0       # sem resposta válida por esse tempo = Módulo 3 fora do ar
 TIMEOUT_SEGUNDOS = 10  # rede do campus pode responder devagar
 
 
@@ -27,8 +28,14 @@ class ConsultaEnsaioAtivo:
     * ``None``         — ainda sem resposta ou falha de rede (estado desconhecido).
     """
 
-    def __init__(self, url, token=None, intervalo_s=INTERVALO_CONSULTA_S, session=None, iniciar=True):
+    def __init__(
+        self, url, token=None, intervalo_s=INTERVALO_CONSULTA_S, session=None, iniciar=True,
+        clock=time.monotonic,
+    ):
         self.url = url
+        self._clock = clock
+        self._criado = clock()
+        self._ultima_resposta = None
         self.token = token
         self.intervalo_s = intervalo_s
         self._session = session or requests.Session()
@@ -43,6 +50,16 @@ class ConsultaEnsaioAtivo:
         with self._lock:
             return self._atual
 
+    def online(self):
+        """True se o Módulo 3 respondeu nos últimos OFFLINE_APOS_S segundos;
+        None enquanto ainda não houve tempo para a primeira resposta."""
+        with self._lock:
+            ultima = self._ultima_resposta
+        agora = self._clock()
+        if ultima is None:
+            return None if agora - self._criado < OFFLINE_APOS_S else False
+        return agora - ultima < OFFLINE_APOS_S
+
     def parar(self):
         self._parar.set()
 
@@ -51,6 +68,8 @@ class ConsultaEnsaioAtivo:
         resultado, aviso = self._consultar()
         with self._lock:
             self._atual = resultado
+            if resultado is not None:
+                self._ultima_resposta = self._clock()
         if aviso != self._ultimo_aviso:
             if aviso:
                 print(aviso)

@@ -6,6 +6,7 @@ import threading
 AJUDA = """
 Comandos (digite e tecle Enter):
   novo            tara a balança SEM CARGA e inicia o ensaio armado no Módulo 3
+  novo EQUIPE     sem ensaio armado (ou com o Módulo 3 fora do ar): ensaio em modo local
   fim             encerra o ensaio atual como concluído
   cancelar        descarta o ensaio atual sem registrar resultado
   tara            zera a balança fora de ensaio
@@ -24,12 +25,12 @@ ALIASES = {
 
 
 def interpretar_comando(texto: str):
-    """'novo mock002' -> ('novo', 'MOCK002'); comando desconhecido -> (None, texto)."""
+    """'novo equipe 07' -> ('novo', 'EQUIPE 07'); comando desconhecido -> (None, texto)."""
     partes = texto.strip().split()
     if not partes:
         return None, None
     comando = ALIASES.get(partes[0].lower())
-    argumento = partes[1].upper() if len(partes) > 1 else None
+    argumento = " ".join(partes[1:]).upper() if len(partes) > 1 else None
     return (comando, argumento) if comando else (None, texto.strip())
 
 

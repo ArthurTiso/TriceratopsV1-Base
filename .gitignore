@@ -14,11 +14,14 @@ env/
 # Dados gerados em runtime (não fazem parte do código-fonte)
 data.json
 data.json.tmp
+resultados.csv
+comandos/
 state.json
 data
 
 # Configuração local do Streamlit (pode conter tokens/preferências da máquina)
-.streamlit/
+.streamlit/*
+!.streamlit/config.toml
 
 # Editor / SO
 .vscode/

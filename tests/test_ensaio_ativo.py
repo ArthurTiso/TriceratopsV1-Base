@@ -72,6 +72,19 @@ class ConsultaEnsaioAtivoTest(unittest.TestCase):
         self.assertIs(consulta.consultar(), False)
         self.assertNotIn("Authorization", sessao.headers)
 
+    def test_online_is_unknown_until_first_answer_or_timeout(self):
+        relogio = [0.0]
+        sessao = SessaoFalsa(requests.ConnectionError())
+        consulta = ConsultaEnsaioAtivo("http://m3", session=sessao, iniciar=False, clock=lambda: relogio[0])
+        with mock.patch("builtins.print"):
+            consulta.consultar()
+            self.assertIsNone(consulta.online())
+            relogio[0] = 16
+            self.assertIs(consulta.online(), False)
+            sessao.resposta = RespostaFalsa(200, {"active": False})
+            consulta.consultar()
+        self.assertIs(consulta.online(), True)
+
     def test_repeated_warnings_are_printed_once(self):
         consulta = ConsultaEnsaioAtivo(
             "http://m3", "tok", session=SessaoFalsa(requests.ConnectionError()), iniciar=False

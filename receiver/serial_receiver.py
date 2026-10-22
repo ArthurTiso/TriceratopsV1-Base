@@ -22,6 +22,10 @@ class SerialReceiver(BaseReceiver):
         self._ultima_tentativa = None
         self._conectar()
 
+    @property
+    def conectado(self) -> bool:
+        return self._serial is not None
+
     def receber(self):
         if self._serial is None and not self._conectar():
             return None

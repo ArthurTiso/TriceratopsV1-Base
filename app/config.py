@@ -13,6 +13,8 @@ from sender.modulo3_payload import url_base
 RAIZ_PROJETO = Path(__file__).resolve().parent.parent
 ARQUIVO_ENV = RAIZ_PROJETO / ".env"
 ARQUIVO_ESTADO = RAIZ_PROJETO / "data.json"
+ARQUIVO_RESULTADOS = RAIZ_PROJETO / "resultados.csv"
+PASTA_COMANDOS = RAIZ_PROJETO / "comandos"
 
 RECEPTORES = ("serial", "simulador")
 
