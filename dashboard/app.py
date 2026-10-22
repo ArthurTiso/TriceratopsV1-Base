@@ -95,11 +95,13 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"], .stApp {
 .mensagem {{ text-align:center; color:{CORES['dim']}; margin-bottom:12px; font-size:.95rem; min-height:1.2em; }}
 .card {{ background:{CORES['surface']}; border:1px solid {CORES['border']}; border-radius:12px; padding:14px 18px; }}
 .rotulo {{ font-size:.8rem; letter-spacing:.18em; color:{CORES['dim']}; font-weight:600; }}
-.maxima {{ text-align:center; }}
+.maxima {{ text-align:center; min-height:300px; display:flex; flex-direction:column; justify-content:center;
+           align-items:center; margin-top:30px; margin-bottom:12px; }}
 .maxima.ruptura {{ border-color:#8A3A40; }}
 .maxima.ruptura .rotulo {{ color:#E79A9F; }}
-.maxima .valor {{ font-size:8.5rem; font-weight:700; line-height:1; margin:8px 0 4px; color:{CORES['text']}; }}
-.maxima .valor small {{ font-size:2.6rem; opacity:.8; }}
+.maxima .valor {{ font-size:clamp(3.5rem, 6.5vw, 7rem); font-weight:700; line-height:1; margin:14px 0 8px;
+                  color:{CORES['text']}; white-space:nowrap; }}
+.maxima .valor small {{ font-size:.32em; opacity:.8; }}
 .selo {{ display:inline-block; margin:6px 0 4px; padding:6px 14px; border-radius:20px; font-weight:700; font-size:.95rem; }}
 .selo.ok {{ background:rgba(59,178,115,.15); color:#7fe3a9; border:1px solid {CORES['ok']}; }}
 .selo.pend {{ background:rgba(76,154,200,.15); color:#9fd0ee; border:1px solid {CORES['steel']}; }}
@@ -353,15 +355,19 @@ def painel():
         css_ruptura()
     topo(dados)
     faixa(dados)
-    esquerda, direita = st.columns([3.2, 1], gap="medium")
+    esquerda, direita = st.columns([1, 2.3], gap="medium")
     with esquerda:
-        grafico(dados)
         carga_maxima(dados)
-    with direita:
         confirmar_ruptura(dados)
-        eventos(dados)
-        if dados.get("status") != "SEM_DADOS":
-            controle_manual(dados)
+    with direita:
+        grafico(dados)
+        # Eventos e controle manual ficam logo abaixo do gráfico, na mesma largura.
+        col_eventos, col_controle = st.columns(2, gap="medium")
+        with col_eventos:
+            eventos(dados)
+        with col_controle:
+            if dados.get("status") != "SEM_DADOS":
+                controle_manual(dados)
 
 
 painel()
