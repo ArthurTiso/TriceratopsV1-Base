@@ -261,7 +261,8 @@ def eventos(dados):
         f'{e["hora"]} <span class="ev-{e["tipo"]}">{html.escape(e["texto"])}</span><br>'
         for e in reversed(itens)
     ) or "nenhum evento ainda"
-    st.html(f'<div class="card"><div class="rotulo">EVENTOS</div><div class="eventos">{linhas}</div></div>')
+    with st.expander("EVENTOS", expanded=False):
+        st.html(f'<div class="eventos">{linhas}</div>')
 
 
 def confirmar_ruptura(dados):
