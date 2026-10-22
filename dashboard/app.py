@@ -37,6 +37,22 @@ CORES = {
     "ok": "#3BB273", "danger": "#C25058", "warn": "#F2A030",
 }
 
+# Tons da tela na ruptura. A tela inteira (fundo, cartões e faixa) muda para
+# o tema escolhido em TEMA_RUPTURA enquanto o status for BROKEN.
+TEMAS_RUPTURA = {
+    "A": {"bg": CORES["bg"], "surface": CORES["surface"], "border": CORES["border"],
+          "faixa": "#7A2E33", "faixa_texto": "#F6DADC", "destaque": "#8A3A40"},
+    "B": {"bg": CORES["bg"], "surface": CORES["surface"], "border": CORES["border"],
+          "faixa": "#9E2A33", "faixa_texto": "#FCE4E6", "destaque": "#B23A44"},
+    "C": {"bg": "#170F12", "surface": "#21161A", "border": "#3A2328",
+          "faixa": "#9E2A33", "faixa_texto": "#FCE4E6", "destaque": "#B23A44"},
+    "D": {"bg": "#210F13", "surface": "#2D151A", "border": "#4A2228",
+          "faixa": "#B02E38", "faixa_texto": "#FFFFFF", "destaque": "#C9434D"},
+    "E": {"bg": "#2C0E13", "surface": "#3A141A", "border": "#5C232B",
+          "faixa": "#C23440", "faixa_texto": "#FFFFFF", "destaque": "#DA505B"},
+}
+TEMA_RUPTURA = "A"
+
 # Faixa de status: (texto, classe CSS)
 STATUS = {
     "RUNNING": ("● EM ENSAIO", "f-ensaio"),
@@ -155,7 +171,26 @@ def faixa(dados):
     st.html(f'<div class="mensagem">{html.escape(dados.get("mensagem") or "")}</div>')
 
 
+def tema(dados):
+    """Cores de fundo, cartões e bordas: as normais ou as do tema de ruptura."""
+    if dados.get("status") == "BROKEN":
+        return TEMAS_RUPTURA[TEMA_RUPTURA]
+    return {"bg": CORES["bg"], "surface": CORES["surface"], "border": CORES["border"]}
+
+
+def css_ruptura():
+    t = TEMAS_RUPTURA[TEMA_RUPTURA]
+    st.html(f"""<style>
+html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"], .stApp {{ background-color:{t['bg']} !important; }}
+.card {{ background:{t['surface']}; border-color:{t['border']}; }}
+.maxima.ruptura {{ border-color:{t['destaque']}; }}
+.f-ruptura {{ background:{t['faixa']}; color:{t['faixa_texto']}; }}
+div[data-testid="stExpander"] details {{ background:{t['surface']}; border-color:{t['border']}; }}
+</style>""")
+
+
 def grafico(dados):
+    cores = tema(dados)
     historico = dados.get("historico", [])
     tempos = [p[0] for p in historico]
     picos = [p[2] if len(p) > 2 else p[1] for p in historico]
@@ -179,10 +214,10 @@ def grafico(dados):
                            yref="paper", x=0.5, y=0.5, font=dict(color=CORES["dim"], size=15))
     fig.update_layout(
         height=430, margin=dict(l=10, r=20, t=30, b=10), showlegend=False,
-        paper_bgcolor=CORES["surface"], plot_bgcolor=CORES["surface"],
+        paper_bgcolor=cores["surface"], plot_bgcolor=cores["surface"],
         font=dict(color=CORES["text"], family="IBM Plex Mono", size=13),
-        xaxis=dict(title="tempo (s)", gridcolor=CORES["border"], zeroline=False, rangemode="tozero"),
-        yaxis=dict(title="carga máxima (kg)", gridcolor=CORES["border"], zeroline=False, rangemode="tozero"),
+        xaxis=dict(title="tempo (s)", gridcolor=cores["border"], zeroline=False, rangemode="tozero"),
+        yaxis=dict(title="carga máxima (kg)", gridcolor=cores["border"], zeroline=False, rangemode="tozero"),
     )
     st.html('<div class="rotulo" style="margin:4px 0 6px">CARGA MÁXIMA × TEMPO</div>')
     st.plotly_chart(fig, config={"displayModeBar": False})
@@ -278,6 +313,8 @@ def painel():
         "status": "SEM_DADOS", "peso_max": 0, "historico": [], "m3_online": None, "balanca_online": None,
         "mensagem": "Inicie o Módulo 2: python -m app.main",
     }
+    if dados.get("status") == "BROKEN":
+        css_ruptura()
     topo(dados)
     faixa(dados)
     esquerda, direita = st.columns([3.2, 1], gap="medium")
