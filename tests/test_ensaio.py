@@ -2,13 +2,14 @@ import unittest
 from unittest import mock
 
 from apoio import RelogioFalso, medida
-from core.ensaio import COLAPSO, FIM_MANUAL, INTERROMPIDO, NOVO_ENSAIO, ControleEnsaio
+from core.ensaio import COLAPSO, COLAPSO_DESFEITO, FIM_MANUAL, INTERROMPIDO, NOVO_ENSAIO, ControleEnsaio
 from core.system_state import (
     BROKEN,
     ERRO_SENSOR,
     FINALIZADO,
     IDLE,
     INACTIVE,
+    RUPTURA_DETECTADA,
     RUNNING,
     TARANDO,
     SystemState,
@@ -58,6 +59,14 @@ class ControleEnsaioTest(unittest.TestCase):
         self.assertEqual(self.state.status, IDLE)
         self.assertFalse(self.controle.em_ensaio)
 
+    def test_chart_follows_the_peak_since_the_last_tare_outside_a_test(self):
+        self.tara_do_arduino()
+        self.linha(medida(3.0))
+        self.linha(medida(1.0, pico_kg=3.0))
+
+        self.assertEqual([p[2] for p in self.state.historico], [3.0, 3.0])
+        self.assertEqual(self.state.status, IDLE)
+
     def test_new_test_starts_when_the_requested_tare_finishes(self):
         self.assertTrue(self.controle.novo_ensaio("MOCK002"))
         self.assertEqual(self.state.status, TARANDO)
@@ -74,7 +83,7 @@ class ControleEnsaioTest(unittest.TestCase):
             self.linha(medida(1.0))
 
         self.assertAlmostEqual(self.state.tempo, 3.0)
-        self.assertEqual(self.state.historico[0], (0.0, 0.0))
+        self.assertEqual(self.state.historico[0], (0.0, 0.0, 0.0))
 
     def test_cannot_start_two_tests_at_once(self):
         self.iniciar_ensaio()
@@ -91,7 +100,8 @@ class ControleEnsaioTest(unittest.TestCase):
         self.assertEqual(self.linha(medida(1.0, pico_kg=10.0)), [])  # queda percebida agora
         self.assertEqual(self.linha(medida(1.0, pico_kg=10.0)), [])  # 0,5 s
         self.assertEqual(self.linha(medida(1.0, pico_kg=10.0)), [COLAPSO])  # 1,0 s
-        self.assertEqual(self.state.status, BROKEN)
+        self.assertEqual(self.state.status, RUPTURA_DETECTADA)
+        self.assertTrue(self.controle.em_ensaio)  # só termina quando o operador confirmar
         self.assertEqual(self.state.peso_max, 10.0)
 
     def test_a_momentary_dip_is_not_a_collapse(self):
@@ -130,18 +140,43 @@ class ControleEnsaioTest(unittest.TestCase):
 
         self.assertEqual(eventos, [COLAPSO])
 
-    def test_measurements_after_the_collapse_do_not_change_the_result(self):
+    def test_detected_collapse_is_reported_once_until_confirmed(self):
         self.iniciar_ensaio()
         self.carregar_ate(10.0)
         for _ in range(3):
             self.linha(medida(1.0, pico_kg=10.0))
-        tempo_final = self.state.tempo
+        tempo_ruptura = self.state.tempo_ruptura
 
         eventos = [e for _ in range(10) for e in self.linha(medida(0.2, pico_kg=10.0))]
 
         self.assertEqual(eventos, [])
+        self.assertEqual(self.state.status, RUPTURA_DETECTADA)
+        self.assertEqual(self.controle.finalizar(), [FIM_MANUAL])
         self.assertEqual(self.state.status, BROKEN)
-        self.assertEqual(self.state.tempo, tempo_final)
+        self.assertEqual(self.state.tempo_ruptura, tempo_ruptura)  # instante da queda, não do clique
+        self.assertEqual(self.state.peso_max, 10.0)
+
+    def test_load_rising_again_undoes_the_detection(self):
+        self.iniciar_ensaio()
+        self.carregar_ate(10.0)
+        for _ in range(3):
+            self.linha(medida(1.0, pico_kg=10.0))
+
+        self.assertEqual(self.linha(medida(9.0, pico_kg=10.0)), [COLAPSO_DESFEITO])
+        self.assertEqual(self.state.status, RUNNING)
+        self.assertIsNone(self.state.tempo_ruptura)
+
+    def test_detection_survives_a_cable_hiccup(self):
+        self.iniciar_ensaio()
+        self.carregar_ate(10.0)
+        for _ in range(3):
+            self.linha(medida(1.0, pico_kg=10.0))
+        self.relogio.avancar(6)
+        self.controle.verificar()
+        self.assertEqual(self.state.status, INACTIVE)
+
+        self.assertEqual(self.linha(medida(0.5, pico_kg=10.0)), [])
+        self.assertEqual(self.state.status, RUPTURA_DETECTADA)
 
     # ---- comandos do operador ----
 
@@ -150,8 +185,17 @@ class ControleEnsaioTest(unittest.TestCase):
         self.carregar_ate(6.0)
 
         self.assertEqual(self.controle.finalizar(), [FIM_MANUAL])
-        self.assertEqual(self.state.status, FINALIZADO)
+        self.assertEqual(self.state.status, BROKEN)
+        self.assertIsNotNone(self.state.tempo_ruptura)
         self.assertEqual(self.controle.finalizar(), [])
+
+    def test_closed_elsewhere_freezes_without_a_result(self):
+        self.iniciar_ensaio()
+        self.carregar_ate(6.0)
+
+        self.assertTrue(self.controle.encerrar_sem_resultado())
+        self.assertEqual(self.state.status, FINALIZADO)
+        self.assertFalse(self.controle.encerrar_sem_resultado())
 
     def test_cancel_discards_the_test(self):
         self.iniciar_ensaio()

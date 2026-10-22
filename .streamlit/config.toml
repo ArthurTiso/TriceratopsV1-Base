@@ -1,0 +1,11 @@
+# Tema do painel do Módulo 2 (streamlit run dashboard/app.py, a partir da raiz).
+[theme]
+base = "dark"
+primaryColor = "#3BB273"
+backgroundColor = "#0F1418"
+secondaryBackgroundColor = "#182128"
+textColor = "#EEF2F4"
+font = "monospace"
+
+[browser]
+gatherUsageStats = false

@@ -6,19 +6,18 @@ from datetime import datetime, timezone
 import requests
 
 MAX_TENTATIVAS = 3
-TIMEOUT_SEGUNDOS = 3
+TIMEOUT_SEGUNDOS = 10  # rede do campus pode responder devagar
 ESPERA_ENTRE_TENTATIVAS = 1.0  # segundos
 TAMANHO_MAXIMO_FILA = 200
 TEMPO_MAXIMO_ENCERRAMENTO = 10.0  # segundos para esvaziar a fila ao parar
 
 # Respostas que podem dar certo numa nova tentativa. Os demais erros 4xx
-# (401 token, 404 equipe, 422 validação) não mudam ao repetir.
+# (401 autenticação, 404 endereço, 422 validação) não mudam ao repetir.
 STATUS_TEMPORARIOS = {408, 429}
 
 MENSAGENS_ERRO = {
-    401: "token recusado — confira SPINO_MODULO3_TOKEN e SENSORS_API_TOKEN do Módulo 3",
-    404: "equipe não encontrada — confira SPINO_TEAM_CODE",
-    422: "dados recusados (equipe não aprovada para ensaio ou payload inválido)",
+    401: "autenticação recusada — confira SPINO_MODULO3_TOKEN",
+    404: "endereço não encontrado — confira SPINO_MODULO3_URL",
 }
 
 _FIM = object()  # sentinela para encerrar a thread
@@ -36,11 +35,14 @@ class ApiSender:
       pelo envio.
     - parar() envia o que ainda está na fila antes de encerrar, para não
       perder o evento "completed" ao fechar o programa logo após o colapso.
+    - ao_concluir(payload, ok, detalhe), se informado, é chamado (na thread de
+      envio) com o resultado final de cada leitura.
     """
 
-    def __init__(self, url, token=None, session=None):
+    def __init__(self, url, token=None, session=None, ao_concluir=None):
         self.url = url
         self.token = token
+        self.ao_concluir = ao_concluir
         self._session = session or requests.Session()
         self._fila = queue.Queue(maxsize=TAMANHO_MAXIMO_FILA)
         self._thread = threading.Thread(target=self._processar_fila, daemon=True)
@@ -72,9 +74,15 @@ class ApiSender:
             payload = self._fila.get()
             if payload is _FIM:
                 return
-            self._enviar_com_retentativa(payload)
+            ok, detalhe = self._enviar_com_retentativa(payload)
+            if self.ao_concluir is not None:
+                try:
+                    self.ao_concluir(payload, ok, detalhe)
+                except Exception as e:  # nunca derruba a thread de envio
+                    print(f"⚠️  Erro ao registrar o resultado do envio: {e}")
 
     def _enviar_com_retentativa(self, payload):
+        """Envia com retentativas. Devolve (ok, detalhe)."""
         headers = {"Accept": "application/json"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
@@ -88,11 +96,11 @@ class ApiSender:
                 if resposta.status_code < 300:
                     if evento != "sample":
                         print(f"📤 Módulo 3 confirmou '{evento}' ({resposta.status_code})")
-                    return
+                    return True, "confirmado"
                 if resposta.status_code < 500 and resposta.status_code not in STATUS_TEMPORARIOS:
-                    motivo = MENSAGENS_ERRO.get(resposta.status_code, resposta.text[:200])
+                    motivo = MENSAGENS_ERRO.get(resposta.status_code) or _mensagem(resposta)
                     print(f"❌ Módulo 3 recusou '{evento}' ({resposta.status_code}): {motivo}")
-                    return
+                    return False, motivo
                 print(
                     f"⚠️  Módulo 3 respondeu {resposta.status_code} "
                     f"(tentativa {tentativa}/{MAX_TENTATIVAS})"
@@ -106,3 +114,17 @@ class ApiSender:
                 time.sleep(ESPERA_ENTRE_TENTATIVAS)
 
         print(f"❌ Desisti de enviar '{evento}' pro Módulo 3 após esgotar as tentativas")
+        return False, "sem resposta do Módulo 3"
+
+
+def _mensagem(resposta):
+    """Texto de erro do Laravel (ex.: 422 "O ensaio não está aceitando novas leituras")."""
+    try:
+        corpo = resposta.json()
+    except Exception:
+        return resposta.text[:200]
+    if not isinstance(corpo, dict):
+        return resposta.text[:200]
+    erros = corpo.get("errors") or {}
+    detalhes = [msg for mensagens in erros.values() for msg in mensagens]
+    return "; ".join(detalhes) or corpo.get("message") or resposta.text[:200]

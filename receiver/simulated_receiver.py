@@ -50,6 +50,8 @@ class SimulatedReceiver(BaseReceiver):
         self._carregamento = None
         self._iniciar_tara(com_carregamento=False)
 
+    conectado = True
+
     def receber(self):
         agora = self._clock()
         while agora - self._ultima_leitura >= 1 / TAXA_HX711_HZ:
