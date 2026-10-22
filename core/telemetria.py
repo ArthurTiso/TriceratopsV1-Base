@@ -4,15 +4,16 @@
 * ``sample``    — no máximo um por intervalo (1 s por padrão, abaixo do
   limite de 120 req/min da API), e imediatamente quando a carga supera o
   maior valor já enviado;
-* ``completed`` — uma única vez, no colapso ou no encerramento manual. Depois
-  disso nada mais é enviado até o próximo ensaio: no Módulo 3, qualquer
-  amostra após o ``completed`` voltaria a equipe para "running".
+* ``completed`` — uma única vez, quando o operador confirma a ruptura. A queda
+  de carga detectada sozinha não encerra nada no Módulo 3: as amostras seguem
+  até a confirmação. Depois do ``completed`` nada mais é enviado até o próximo
+  ensaio: no Módulo 3, qualquer amostra após ele voltaria a equipe para "running".
 """
 
 import time
 
-from core.ensaio import COLAPSO, FIM_MANUAL, INTERROMPIDO, NOVO_ENSAIO
-from core.system_state import RUNNING
+from core.ensaio import FIM_MANUAL, INTERROMPIDO, NOVO_ENSAIO
+from core.system_state import RUNNING, RUPTURA_DETECTADA
 
 STARTED = "started"
 SAMPLE = "sample"
@@ -39,12 +40,12 @@ class PoliticaEnvio:
         if self._encerrado:
             return envios
 
-        if COLAPSO in eventos or FIM_MANUAL in eventos:
+        if FIM_MANUAL in eventos:
             self._encerrado = True
             envios.append(COMPLETED)
         elif INTERROMPIDO in eventos:
             self._encerrado = True
-        elif not envios and status == RUNNING:
+        elif not envios and status in (RUNNING, RUPTURA_DETECTADA):
             novo_pico = (
                 self._maior_carga_enviada is not None
                 and carga_kg > self._maior_carga_enviada

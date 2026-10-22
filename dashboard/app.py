@@ -56,6 +56,7 @@ TEMA_RUPTURA = "A"
 # Faixa de status: (texto, classe CSS)
 STATUS = {
     "RUNNING": ("● EM ENSAIO", "f-ensaio"),
+    "RUPTURA_DETECTADA": ("RUPTURA DETECTADA · {carga} kg — CONFIRME", "f-detectada"),
     "TARANDO": ("TARANDO — NÃO TOQUE NA PONTE", "f-tarando"),
     "BROKEN": ("RUPTURA · {carga} kg", "f-ruptura"),
     "FINALIZADO": ("ENSAIO ENCERRADO · {carga} kg", "f-ruptura"),
@@ -86,6 +87,7 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"], .stApp {
 .f-ensaio {{ background:{CORES['accent']}; color:#111; }}
 .f-tarando {{ background:{CORES['accent']}; color:#111; animation:pisca 1.2s infinite; }}
 .f-ruptura {{ background:#7A2E33; color:#F6DADC; }}
+.f-detectada {{ background:#7A2E33; color:#F6DADC; animation:pisca 1.2s infinite; }}
 .f-alerta {{ background:#5C3A12; color:#F8D29A; border:1px solid #B87A20; }}
 .f-idle {{ background:{CORES['surface2']}; color:{CORES['dim']}; border:1px solid {CORES['border']}; }}
 .f-pronto {{ background:#3A3113; color:#F2D27A; border:1px solid #8C7424; }}
@@ -110,6 +112,9 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"], .stApp {
 .pronto {{ background:rgba(76,154,200,.10); border:1px solid {CORES['steel']}; color:#9fd0ee; border-radius:8px;
            padding:10px 12px; font-size:.88rem; margin-bottom:10px; }}
 div[data-testid="stExpander"] details {{ background:{CORES['surface']}; border:1px solid {CORES['border']}; border-radius:12px; }}
+.st-key-confirmar_ruptura button, .st-key-ruptura_sim button {{ background:#B23A44 !important; border-color:#DA505B !important;
+          color:#FFFFFF !important; font-size:1.25rem !important; padding:14px 0 !important; }}
+.st-key-confirmar_ruptura button:hover, .st-key-ruptura_sim button:hover {{ background:#C9434D !important; }}
 div[data-testid="stExpander"] summary p {{ letter-spacing:.15em; font-weight:600; color:{CORES['dim']}; }}
 .stButton button, div[data-testid="stButton"] button {{ width:100%; font-weight:700; letter-spacing:.04em; }}
 </style>
@@ -258,6 +263,40 @@ def eventos(dados):
     st.html(f'<div class="card"><div class="rotulo">EVENTOS</div><div class="eventos">{linhas}</div></div>')
 
 
+def confirmar_ruptura(dados):
+    """Único caminho que encerra o ensaio no Módulo 3: o operador confirma a ruptura."""
+    if not dados.get("em_ensaio"):
+        st.session_state.pedir_confirmacao_ruptura = False
+        return
+    detectada = bool(dados.get("ruptura_detectada"))
+    carga = kg(dados.get("peso_max", 0))
+    destino = "em resultados.csv" if dados.get("modo") == "local" else "no Módulo 3"
+
+    if detectada:
+        # Queda de carga já detectada: um clique basta.
+        st.html(f'<div class="alerta">A carga caiu. Confira a ponte e confirme: <b>{carga} kg</b> '
+                f'serão registrados {destino} e o ensaio será encerrado.</div>')
+        if st.button("💥 CONFIRMAR RUPTURA", key="confirmar_ruptura", width="stretch"):
+            comando("fim", f"Ruptura confirmada: {carga} kg")
+        return
+
+    # Sem queda detectada: pede uma segunda confirmação para evitar encerrar por engano.
+    if not st.session_state.get("pedir_confirmacao_ruptura", False):
+        if st.button("💥 CONFIRMAR RUPTURA", key="confirmar_ruptura", width="stretch"):
+            st.session_state.pedir_confirmacao_ruptura = True
+            st.rerun(scope="fragment")
+        return
+    st.html(f'<div class="alerta">A queda de carga ainda não foi detectada. Confirmar registra '
+            f'<b>{carga} kg</b> {destino} e encerra o ensaio.</div>')
+    sim, nao = st.columns(2)
+    if sim.button("Confirmar", key="ruptura_sim", width="stretch"):
+        comando("fim", f"Ruptura confirmada: {carga} kg")
+        st.session_state.pedir_confirmacao_ruptura = False
+    if nao.button("Voltar", key="ruptura_nao", width="stretch"):
+        st.session_state.pedir_confirmacao_ruptura = False
+        st.rerun(scope="fragment")
+
+
 def controle_manual(dados):
     m3_online = dados.get("m3_online")
     em_ensaio = bool(dados.get("em_ensaio"))
@@ -284,9 +323,6 @@ def controle_manual(dados):
                 comando(f"novo {equipe.strip()}", f"Iniciando em modo local: {equipe.strip()}")
             else:
                 st.toast("Informe a equipe para iniciar em modo local.")
-
-        if st.button("■ ENCERRAR (registrar pico)", disabled=not em_ensaio, key="encerrar"):
-            comando("fim", "Encerrando e registrando a carga máxima")
 
         confirmar = st.session_state.get("confirmar_cancelamento", False)
         if not confirmar:
@@ -322,6 +358,7 @@ def painel():
         grafico(dados)
         carga_maxima(dados)
     with direita:
+        confirmar_ruptura(dados)
         eventos(dados)
         if dados.get("status") != "SEM_DADOS":
             controle_manual(dados)

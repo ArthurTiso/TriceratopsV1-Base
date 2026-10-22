@@ -56,12 +56,18 @@ tara (ponte montada, sem carga) e começam a medir:
 |---|---|---|
 | Início | uma das formas acima → tara → cronômetro começa no fim da tara | `started` |
 | Em andamento | carga = \|MEDIA_KG\|, pico = PICO_ABS_KG | `sample` a cada 1 s e a cada novo pico |
-| Ruptura | pico ≥ 2 kg e carga ≤ 20% do pico por ≥ 1 s | `completed` com o pico, uma única vez |
-| Encerramento manual | Encerrar no painel ou `fim` | `completed` com o pico |
+| Ruptura detectada | pico ≥ 2 kg e carga ≤ 20% do pico por ≥ 1 s: o painel pede a confirmação; o ensaio segue aberto | `sample` (continua) |
+| Ruptura confirmada | **Confirmar ruptura** no painel ou `fim` | `completed` com o pico, uma única vez |
 | Encerrar/Cancelar no Módulo 3 | o M2 para; o pico fica em `resultados.csv` para lançar em Rupturas | nenhum |
 | Cancelar no Módulo 2 | painel ou `cancelar` | nenhum |
 | Tara inesperada (Arduino reiniciado) | ensaio interrompido | nenhum |
 | Sem linhas por 5 s / erro no HX711 | status `INACTIVE` / `ERRO_SENSOR` no painel | pausado |
+
+O Módulo 3 só encerra o ensaio e registra a ruptura quando o operador confirma
+no Módulo 2: a queda de carga detectada apenas avisa (faixa "Ruptura detectada"
+e botão Confirmar ruptura em destaque). Se a carga voltar a subir antes da
+confirmação, o aviso some e o ensaio continua. Confirmar sem a queda detectada
+pede uma segunda confirmação.
 
 Um ensaio que já estava em andamento quando o Módulo 2 é aberto nunca é tarado
 automaticamente (a ponte pode estar carregada): use Iniciar ensaio no painel.
@@ -106,13 +112,14 @@ python -m sender.mock_modulo3_server     # opcional: Módulo 3 simulado (porta 8
 ```
 
 O painel mostra o status, o gráfico da carga máxima, a carga máxima, os
-eventos e as luzes da balança e do Módulo 3. A seção **Controle manual (M2)**
+eventos e as luzes da balança e do Módulo 3. Durante o ensaio, o botão
+**Confirmar ruptura** fica acima dos eventos. A seção **Controle manual (M2)**
 fica recolhida e abre sozinha quando o Módulo 3 não responde:
 
 | Botão | Terminal | Ação |
 |---|---|---|
+| Confirmar ruptura | `fim` | registra a carga máxima no Módulo 3 e encerra |
 | Iniciar ensaio | `novo` / `novo EQUIPE` | tara e inicia o ensaio armado (ou em modo local) |
-| Encerrar | `fim` | encerra e registra a carga máxima |
 | Cancelar | `cancelar` | descarta o ensaio, com confirmação |
 | Tarar | `tara` | zera a balança fora de ensaio |
 

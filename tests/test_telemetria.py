@@ -2,7 +2,7 @@ import unittest
 
 from apoio import RelogioFalso
 from core.ensaio import COLAPSO, FIM_MANUAL, INTERROMPIDO, NOVO_ENSAIO
-from core.system_state import BROKEN, IDLE, RUNNING
+from core.system_state import BROKEN, IDLE, RUNNING, RUPTURA_DETECTADA
 from core.telemetria import COMPLETED, SAMPLE, STARTED, PoliticaEnvio
 
 
@@ -35,12 +35,16 @@ class PoliticaEnvioTest(unittest.TestCase):
         self.assertEqual(self.decidir(1.5), [SAMPLE])
 
     def test_completed_is_sent_once_and_then_nothing(self):
-        for fim in (COLAPSO, FIM_MANUAL):
-            with self.subTest(fim=fim):
-                self.decidir(1.0, [NOVO_ENSAIO])
-                self.assertEqual(self.decidir(0.5, [fim], status=BROKEN), [COMPLETED])
-                for _ in range(10):
-                    self.assertEqual(self.decidir(0.5, status=BROKEN), [])
+        self.decidir(1.0, [NOVO_ENSAIO])
+        self.assertEqual(self.decidir(0.5, [FIM_MANUAL], status=BROKEN), [COMPLETED])
+        for _ in range(10):
+            self.assertEqual(self.decidir(0.5, status=BROKEN), [])
+
+    def test_detected_collapse_keeps_sampling_until_confirmed(self):
+        self.decidir(8.0, [NOVO_ENSAIO], avancar=1)
+
+        self.assertEqual(self.decidir(0.5, [COLAPSO], status=RUPTURA_DETECTADA, avancar=1), [SAMPLE])
+        self.assertEqual(self.decidir(0.4, status=RUPTURA_DETECTADA, avancar=1), [SAMPLE])
 
     def test_interrupted_test_sends_nothing_more(self):
         self.decidir(1.0, [NOVO_ENSAIO])

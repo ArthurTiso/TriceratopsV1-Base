@@ -8,8 +8,10 @@ rompe. O ciclo fica aqui:
 2. ``Tara concluida`` → início do ensaio: cronômetro em 0, evento NOVO_ENSAIO;
 3. a cada medida: carga = |MEDIA_KG|, pico = PICO_ABS_KG (calculado pelo
    Arduino sobre todas as leituras do HX711, não só as enviadas);
-4. colapso: pico >= 2 kg e carga <= 20% do pico por pelo menos 1 s → COLAPSO;
-   o operador também pode encerrar com ``fim`` → FIM_MANUAL.
+4. colapso: pico >= 2 kg e carga <= 20% do pico por pelo menos 1 s → COLAPSO
+   (ruptura detectada). O ensaio NÃO termina sozinho: continua medindo até o
+   operador confirmar a ruptura (``fim`` ou o botão do painel) → FIM_MANUAL.
+   Se a carga voltar a subir antes da confirmação → COLAPSO_DESFEITO.
 
 Uma tara que o Módulo 2 não pediu durante o ensaio (Arduino reiniciado ou
 cabo reconectado) interrompe o ensaio sem enviar ``completed``.
@@ -23,14 +25,16 @@ from core.system_state import (
     FINALIZADO,
     IDLE,
     INACTIVE,
+    RUPTURA_DETECTADA,
     RUNNING,
     TARANDO,
 )
 from protocol.balanca import ErroSensor, Medida, TaraConcluida, TaraIniciada, TaraProgresso
 
 NOVO_ENSAIO = "novo_ensaio"
-COLAPSO = "colapso"
-FIM_MANUAL = "fim_manual"
+COLAPSO = "colapso"                    # ruptura detectada, aguardando confirmação
+COLAPSO_DESFEITO = "colapso_desfeito"  # a carga voltou a subir antes da confirmação
+FIM_MANUAL = "fim_manual"              # ruptura confirmada pelo operador
 INTERROMPIDO = "interrompido"
 
 PESO_MINIMO_COLAPSO_KG = 2.0
@@ -66,6 +70,7 @@ class ControleEnsaio:
         self._inicio_tara = None        # base do gráfico fora de ensaio
         self._ultima_linha = clock()
         self._colapso_desde = None
+        self.ruptura_detectada = False  # colapso detectado, aguardando confirmação
         self._status_antes_da_tara = IDLE
 
     # ---- comandos do operador ----
@@ -87,11 +92,20 @@ class ControleEnsaio:
         return True
 
     def finalizar(self) -> list:
-        """Encerra o ensaio em andamento como concluído (ruptura sem queda clara)."""
+        """Ruptura confirmada pelo operador: encerra o ensaio em andamento."""
         if not self.em_ensaio:
             return []
-        self._encerrar(FINALIZADO)
+        if not self.ruptura_detectada:  # confirmada sem a queda de carga detectada
+            self.state.tempo_ruptura = self.tempo_ensaio()
+        self._encerrar(BROKEN)
         return [FIM_MANUAL]
+
+    def encerrar_sem_resultado(self) -> bool:
+        """Encerrado fora do Módulo 2 (Módulo 3): congela o pico, sem FIM_MANUAL."""
+        if not self.em_ensaio:
+            return False
+        self._encerrar(FINALIZADO)
+        return True
 
     def cancelar(self) -> bool:
         """Descarta o ensaio em andamento ou pendente, sem enviar ``completed``."""
@@ -176,6 +190,7 @@ class ControleEnsaio:
         self.em_ensaio = True
         self._inicio = agora
         self._colapso_desde = None
+        self.ruptura_detectada = False
         self.state.set_status(RUNNING)
         self.state.registrar_ponto(0.0)
         return [NOVO_ENSAIO]
@@ -185,7 +200,7 @@ class ControleEnsaio:
         if status == TARANDO:
             return []  # a tara pedida ainda não começou no Arduino
         if status in (ERRO_SENSOR, INACTIVE):
-            self.state.set_status(RUNNING if self.em_ensaio else IDLE)
+            self.state.set_status(self._status_em_ensaio() if self.em_ensaio else IDLE)
 
         self.state.atualizar_carga(medida.carga_kg, medida.pico_kg)
         if not self.em_ensaio:
@@ -195,10 +210,17 @@ class ControleEnsaio:
             return []
 
         self.state.registrar_ponto(agora - self._inicio)
-        if self._colapsou(medida, agora):
+        colapsou = self._colapsou(medida, agora)
+        if colapsou and not self.ruptura_detectada:
+            self.ruptura_detectada = True
             self.state.tempo_ruptura = self._colapso_desde - self._inicio
-            self._encerrar(BROKEN)
+            self.state.set_status(RUPTURA_DETECTADA, "Confirme a ruptura para registrar no Módulo 3.")
             return [COLAPSO]
+        if not colapsou and self.ruptura_detectada and self._colapso_desde is None:
+            self.ruptura_detectada = False
+            self.state.tempo_ruptura = None
+            self.state.set_status(RUNNING)
+            return [COLAPSO_DESFEITO]
         return []
 
     def _colapsou(self, medida, agora) -> bool:
@@ -213,6 +235,9 @@ class ControleEnsaio:
             self._colapso_desde = agora
         return agora - self._colapso_desde >= self._confirmacao_s
 
+    def _status_em_ensaio(self):
+        return RUPTURA_DETECTADA if self.ruptura_detectada else RUNNING
+
     def _encerrar(self, status):
         if self.em_ensaio:
             self.state.tempo = self.tempo_ensaio()
@@ -220,4 +245,5 @@ class ControleEnsaio:
         self._inicio = None
         self._inicio_tara = None  # congela o gráfico até a próxima tara
         self._colapso_desde = None
+        self.ruptura_detectada = False
         self.state.set_status(status)

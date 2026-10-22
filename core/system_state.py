@@ -4,8 +4,9 @@ from datetime import datetime
 IDLE = "IDLE"              # balança ligada, sem ensaio em andamento
 TARANDO = "TARANDO"        # tara em andamento: balança deve estar sem carga
 RUNNING = "RUNNING"        # ensaio em andamento
-BROKEN = "BROKEN"          # colapso detectado
-FINALIZADO = "FINALIZADO"  # ensaio encerrado manualmente pelo operador
+RUPTURA_DETECTADA = "RUPTURA_DETECTADA"  # queda de carga detectada, aguardando confirmação
+BROKEN = "BROKEN"          # ruptura confirmada pelo operador (resultado enviado)
+FINALIZADO = "FINALIZADO"  # ensaio encerrado no Módulo 3 sem o resultado do M2
 INACTIVE = "INACTIVE"      # sem linhas do Arduino (cabo USB, energia)
 ERRO_SENSOR = "ERRO_SENSOR"  # Arduino responde, mas o HX711 não
 

@@ -9,7 +9,7 @@ from unittest import mock
 
 from apoio import RelogioFalso
 from app.pipeline import Pipeline
-from core.system_state import BROKEN, FINALIZADO, IDLE, RUNNING
+from core.system_state import BROKEN, FINALIZADO, IDLE, RUNNING, RUPTURA_DETECTADA
 from protocol.balanca import formatar_medida
 from sender.ensaio_ativo import EnsaioArmado
 
@@ -81,11 +81,13 @@ class PipelineTest(unittest.TestCase):
         self.linha("TARA=10/20 | BRUTO=1")
         self.linha("Tara concluida. Offset=1")
 
-    def carregar_e_romper(self, pico=8.0):
+    def carregar_e_romper(self, pico=8.0, confirmar=True):
         for kg in range(1, int(pico) + 1):
             self.linha(formatar_medida(kg, kg, kg, 0))
         for _ in range(3):
             self.linha(formatar_medida(0.1, 0.1, pico, 0))
+        if confirmar:  # botão "Confirmar ruptura" do painel
+            self.pipeline.executar_comando("fim")
 
     def eventos(self):
         return [p["event"] for p in self.sender.payloads]
@@ -179,6 +181,26 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(self.sender.payloads, [])
 
     # ---- fim ----
+
+    def test_detected_rupture_waits_for_the_operator_before_telling_module_3(self):
+        self.m3("armed")
+        self.m3("running")
+        self.tara_do_arduino()
+        self.carregar_e_romper(pico=8, confirmar=False)
+
+        self.assertEqual(self.pipeline.state.status, RUPTURA_DETECTADA)
+        self.assertTrue(self.pipeline.state.extras["ruptura_detectada"])
+        self.assertNotIn("completed", self.eventos())
+        self.linha(formatar_medida(0.1, 0.1, 8, 0), avancar=1)
+        self.linha(formatar_medida(0.1, 0.1, 8, 0))
+        self.assertEqual(self.eventos()[-1], "sample")  # o ensaio segue aberto no Módulo 3
+        self.assertEqual(self.resultados_csv(), [])
+
+        self.pipeline.executar_comando("fim")
+
+        self.assertEqual(self.pipeline.state.status, BROKEN)
+        self.assertEqual(self.eventos().count("completed"), 1)
+        self.assertEqual(self.sender.payloads[-1]["load_grams"], 8000)
 
     def test_rupture_result_is_written_after_module_3_confirms(self):
         self.m3("armed")

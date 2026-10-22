@@ -7,7 +7,7 @@ AJUDA = """
 Comandos (digite e tecle Enter):
   novo            tara a balança SEM CARGA e inicia o ensaio armado no Módulo 3
   novo EQUIPE     sem ensaio armado (ou com o Módulo 3 fora do ar): ensaio em modo local
-  fim             encerra o ensaio atual como concluído
+  fim             confirma a ruptura: registra a carga máxima no Módulo 3 e encerra
   cancelar        descarta o ensaio atual sem registrar resultado
   tara            zera a balança fora de ensaio
   ajuda           mostra esta lista
@@ -16,7 +16,7 @@ Comandos (digite e tecle Enter):
 
 ALIASES = {
     "n": "novo", "novo": "novo",
-    "f": "fim", "fim": "fim",
+    "f": "fim", "fim": "fim", "r": "fim", "ruptura": "fim",
     "c": "cancelar", "cancelar": "cancelar",
     "t": "tara", "tara": "tara",
     "?": "ajuda", "h": "ajuda", "ajuda": "ajuda",

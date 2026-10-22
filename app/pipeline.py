@@ -10,6 +10,10 @@ Formas de iniciar um ensaio (todas fazem a tara e começam a medir):
 * "novo" no terminal ou "Iniciar ensaio" no painel, com um ensaio armado;
 * "novo EQUIPE" sem ensaio armado (ou com o Módulo 3 fora do ar): modo local,
   sem envio; o resultado fica em resultados.csv.
+
+O fim do ensaio só chega ao Módulo 3 quando o operador confirma a ruptura
+("Confirmar ruptura" no painel ou "fim" no terminal). A queda de carga
+detectada apenas avisa o operador; até a confirmação o ensaio segue medindo.
 """
 
 import json
@@ -20,7 +24,7 @@ from collections import deque
 from datetime import datetime
 
 from app.console import AJUDA, interpretar_comando
-from core.ensaio import COLAPSO, FIM_MANUAL, INTERROMPIDO, NOVO_ENSAIO, ControleEnsaio
+from core.ensaio import COLAPSO, COLAPSO_DESFEITO, FIM_MANUAL, INTERROMPIDO, NOVO_ENSAIO, ControleEnsaio
 from core.resultados import CONFIRMADO, ENVIANDO, LOCAL, RegistroResultados, novo_resultado
 from core.system_state import BROKEN, FINALIZADO, IDLE, INACTIVE, TARANDO, SystemState
 from core.telemetria import COMPLETED, STARTED, PoliticaEnvio
@@ -188,10 +192,10 @@ class Pipeline:
         elif comando == "fim":
             eventos = self.controle.finalizar()
             if eventos:
+                self._evento(f"Ruptura confirmada: {self.state.peso_max:.1f} kg", "ruptura")
                 self._tratar_eventos(eventos)
-                self._evento(f"Encerrado pelo operador: {self.state.peso_max:.1f} kg", "ruptura")
             else:
-                self._aviso("Nenhum ensaio em andamento para encerrar.")
+                self._aviso("Nenhum ensaio em andamento para confirmar a ruptura.")
         elif comando == "cancelar":
             if self.controle.cancelar():
                 remoto = self._run is not None and self._run.run_id
@@ -263,8 +267,7 @@ class Pipeline:
         """O ensaio foi encerrado/cancelado no Módulo 3 enquanto este M2 o acompanhava."""
         run = self._run
         self._run = None
-        if self.controle.em_ensaio:
-            self.controle.finalizar()  # congela o pico; o Módulo 3 já não aceita leituras
+        if self.controle.encerrar_sem_resultado():  # congela o pico; o Módulo 3 já não aceita leituras
             self._registrar_resultado(
                 run, "encerrado/cancelado no Módulo 3",
                 f"não registrado — lance {self.state.peso_max:.1f} kg em Rupturas se for o caso",
@@ -295,14 +298,18 @@ class Pipeline:
         if NOVO_ENSAIO in eventos and run is not None:
             self._evento(f"Ensaio iniciado — {run.equipe_nome}", "ok")
         if COLAPSO in eventos:
-            self._evento(f"Ruptura: {self.state.peso_max:.1f} kg", "ruptura")
-            print(f"💥 Colapso detectado — carga máxima {self.state.peso_max:.1f} kg\n")
-        if (COLAPSO in eventos or FIM_MANUAL in eventos) and run is not None:
-            motivo = "ruptura detectada" if COLAPSO in eventos else "encerrado no Módulo 2"
-            self._registrar_resultado(run, motivo, ENVIANDO if run.run_id else LOCAL)
+            self._evento(f"Ruptura detectada: {self.state.peso_max:.1f} kg — confirme no painel", "ruptura")
+            print(
+                f"💥 Queda de carga detectada — carga máxima {self.state.peso_max:.1f} kg.\n"
+                "   Confirme a ruptura no painel (Confirmar ruptura) ou digite: fim\n"
+            )
+        if COLAPSO_DESFEITO in eventos:
+            self._evento("A carga voltou a subir — ensaio continua", "aviso")
+        if FIM_MANUAL in eventos and run is not None:
+            self._registrar_resultado(run, "ruptura confirmada no Módulo 2", ENVIANDO if run.run_id else LOCAL)
         if INTERROMPIDO in eventos:
             self._evento("Ensaio interrompido (Arduino reiniciou)", "aviso")
-        if COLAPSO in eventos or FIM_MANUAL in eventos or INTERROMPIDO in eventos:
+        if FIM_MANUAL in eventos or INTERROMPIDO in eventos:
             self._run = None
         return envios
 
@@ -387,6 +394,7 @@ class Pipeline:
         return {
             "device_code": self.device_code,
             "em_ensaio": self.controle.em_ensaio,
+            "ruptura_detectada": self.controle.ruptura_detectada,
             "modo": None if self._run is None else ("local" if self._run.run_id is None else "Módulo 3"),
             "m3_online": self._m3_online,
             "balanca_online": bool(conectado) and self.state.status != INACTIVE,

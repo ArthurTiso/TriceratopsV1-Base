@@ -77,6 +77,21 @@ class IntegracaoModulo3Test(unittest.TestCase):
                 time.sleep(0.001)
             self.relogio.avancar(passo)
 
+    def romper_e_confirmar(self, pipeline, limite_s=60):
+        """Roda até a queda de carga ser detectada e confirma a ruptura (botão do painel)."""
+        for _ in range(int(limite_s)):
+            self.rodar(pipeline, 1)
+            if pipeline.controle.ruptura_detectada:
+                break
+        self.assertTrue(pipeline.controle.ruptura_detectada)
+        self.rodar(pipeline, 3)  # a ruptura sozinha não encerra nada no Módulo 3
+        self.assertNotIn("completed", [e[1] for e in self.eventos()][-3:])
+        pipeline.executar_comando("fim")
+        for _ in range(100):  # espera o Módulo 3 responder ao "completed"
+            self.rodar(pipeline, 0.1)
+            if (pipeline.state.extras["resultado"] or {}).get("registro") != "enviando":
+                break
+
     def eventos(self, equipe=None):
         return [e for e in self.banco.eventos if equipe is None or e[0] == equipe]
 
@@ -101,7 +116,7 @@ class IntegracaoModulo3Test(unittest.TestCase):
             self.rodar(pipeline, 3)  # M2 descobre o ensaio armado
             self.assertEqual(pipeline.armado.run_id, run_id)
             pipeline.executar_comando("novo")
-            self.rodar(pipeline, 60)
+            self.romper_e_confirmar(pipeline)
             picos[equipe] = (run_id, pipeline.state.peso_max)
         self.sender.parar(timeout=10)
 
@@ -159,7 +174,7 @@ class IntegracaoModulo3Test(unittest.TestCase):
             self.assertFalse(pipeline.controle.em_ensaio)
 
             pipeline.executar_comando("novo")  # mesmo ensaio armado, ainda "running"
-            self.rodar(pipeline, 60)
+            self.romper_e_confirmar(pipeline)
         self.sender.parar(timeout=10)
 
         nomes = [e[1] for e in self.eventos("MOCK002")]
@@ -188,7 +203,7 @@ class IntegracaoModulo3Test(unittest.TestCase):
         self.rodar(pipeline, 3)
 
         self.banco.iniciar_armados()  # só o botão "Iniciar" do Módulo 3, sem "novo"
-        self.rodar(pipeline, 60)
+        self.romper_e_confirmar(pipeline)
         self.sender.parar(timeout=10)
         pipeline.finalizar()
 
@@ -228,7 +243,7 @@ class IntegracaoModulo3Test(unittest.TestCase):
         self.rodar(pipeline, 20)  # 15 s sem resposta: Módulo 3 fora do ar
         self.assertFalse(pipeline.state.extras["m3_online"])
         pipeline.executar_comando("novo EQUIPE 07")
-        self.rodar(pipeline, 60)
+        self.romper_e_confirmar(pipeline)
         self.sender.parar(timeout=5)
 
         linha = self.resultados_csv()[0]
